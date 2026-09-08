@@ -1,0 +1,49 @@
+services:
+  roadtrip:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_PASSWORD: ${APP_PASSWORD:?Set a family password of at least 12 characters}
+      APP_ORIGIN: https://${APP_HOST:-roadtrip.home.arpa}
+      PLEX_URL: ${PLEX_URL:?Set the Plex server URL}
+      PLEX_TOKEN: ${PLEX_TOKEN:?Set the Plex token}
+      PLEX_SECTION_IDS: ${PLEX_SECTION_IDS:-}
+      MEDIA_PATH_MAPPINGS: ${MEDIA_PATH_MAPPINGS:?Set the Plex to container path mappings}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - app-data:/data
+      - type: bind
+        source: ${MEDIA_SOURCE:?Set the existing Ubuntu media mount path}
+        target: /media/movies
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:8787:8787"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+  https:
+    image: caddy:2-alpine
+    profiles: [tls]
+    restart: unless-stopped
+    environment:
+      APP_HOST: ${APP_HOST:-roadtrip.home.arpa}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      roadtrip:
+        condition: service_healthy
+volumes:
+  app-data:
+  caddy-data:
+  caddy-config:

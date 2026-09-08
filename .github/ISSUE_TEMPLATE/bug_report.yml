@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible problem with Roadtrip.
+body:
+  - type: markdown
+    attributes:
+      value: Please remove Plex tokens, passwords, cookies, private addresses, and personal library data from anything you share. Report vulnerabilities privately as described in SECURITY.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the expected behavior and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include whether the problem also happens in demo mode.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Roadtrip version, server OS, browser/version, client OS, USB filesystem, and reverse proxy. No credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized error message or logs
+      render: text

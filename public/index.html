@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101b28">
+  <meta name="description" content="Choose your family's movies and prepare the USB stick for your next trip.">
+  <title>Roadtrip · Your family movie library</title>
+  <link rel="stylesheet" href="/styles.css"><script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="login" hidden class="login-wrap">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">R<span>↗</span></div><p class="eyebrow">FAMILY MOVIE LIBRARY</p><h1>Good movies.<br>Great company.</h1>
+      <p>Sign in to choose what comes along.</p><label for="password">Family password</label><input id="password" type="password" autocomplete="current-password" required>
+      <button class="primary" type="submit">Open the library <span>→</span></button><p id="login-error" role="alert"></p>
+    </form>
+  </div>
+  <div id="shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Roadtrip home"><span class="brand-mark small">R<span>↗</span></span>roadtrip<span class="brand-dot">.</span></a>
+      <p class="eyebrow nav-label">PACK THE GOOD STUFF</p>
+      <nav aria-label="Main navigation">
+        <button data-view="library" class="nav-item active"><span>▦</span>Movie library <b id="library-count">0</b></button>
+        <button data-view="trip" class="nav-item"><span>＋</span>Our trip list <b id="trip-count">0</b></button>
+        <button data-view="drive" class="nav-item"><span>▣</span>On the drive <b id="drive-count">0</b></button>
+        <button data-view="wishlist" class="nav-item"><span>☆</span>Wishlist <b id="wish-count">0</b></button>
+      </nav>
+      <div class="sidebar-bottom"><label for="who">Who’s picking?</label><input id="who" maxlength="40" placeholder="Your name" autocomplete="given-name"><p>Your name appears next to your picks.</p><button id="logout" class="text-button">Sign out</button></div>
+    </aside>
+    <main>
+      <header class="topbar"><div><span class="status-dot"></span><span id="connection-label">Your home library</span></div><button id="refresh" class="text-button">↻ Refresh library</button></header>
+      <div id="demo-banner" class="banner" hidden>Demo mode · Fictional titles and test files. No playable movies or real Plex connection.</div>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section class="page-heading"><div><p class="eyebrow" id="view-eyebrow">A LITTLE SOMETHING FOR EVERYONE</p><h1 id="view-title">What’s coming along?</h1><p id="view-description">Find a favorite. Add it to the trip. We’ll handle the packing.</p></div><button id="connect" class="primary">▣ Connect USB folder</button></section>
+      <section id="sync-panel" class="sync-panel" hidden aria-label="Transfer progress">
+        <div class="sync-top"><div><p class="eyebrow">PREPARING YOUR DRIVE</p><h2 id="sync-title">Getting ready…</h2></div><button id="pause" class="secondary">Pause transfer</button></div>
+        <progress id="sync-progress" max="100" value="0" aria-label="Current file progress"></progress>
+        <div class="sync-meta"><span id="sync-detail"></span><span id="wake-status" role="status"></span></div><p class="hint">Keep this tab and your laptop lid open. Verified checkpoints let you pick up after an interruption.</p>
+      </section>
+      <section id="library-view">
+        <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search titles, genres, or years…" aria-label="Search movies"></label><select id="genre" aria-label="Filter by genre"><option value="">All genres</option></select><select id="sort" aria-label="Sort movies"><option value="title">Title A–Z</option><option value="year">Newest first</option><option value="size">Smallest files</option></select></div>
+        <div class="section-line"><h2 id="results-title">Your movie library</h2><span id="updated" class="muted"></span></div>
+        <div id="movie-grid" class="movie-grid"></div><button id="more" class="secondary load-more" hidden>Show more movies</button>
+      </section>
+      <section id="trip-view" hidden><div class="trip-summary"><div><span class="eyebrow">SELECTED FOR THIS TRIP</span><h2 id="trip-total">0 movies</h2><p id="trip-space" class="muted"></p></div><div class="space-field"><label for="free-space">Available on USB (GB, optional)</label><input id="free-space" type="number" min="0" step="0.1" placeholder="Check in your file manager"><p class="hint">The browser cannot read the stick’s free space.</p></div><button id="sync" class="primary">Sync trip to USB →</button></div><div id="trip-list" class="list"></div></section>
+      <section id="drive-view" hidden><div class="drive-toolbar"><div><label for="drive-select">Saved USB catalogs</label><select id="drive-select"></select></div><button id="rescan" class="secondary">Rescan connected folder</button></div><p id="drive-status" class="muted"></p><div id="drive-movies" class="movie-grid"></div><div id="drive-files" class="list"></div></section>
+      <section id="wishlist-view" hidden><form id="wish-form" class="wish-form"><div><label for="wish-title">A movie we should have</label><input id="wish-title" maxlength="120" placeholder="Movie title (and year, if you know it)" required></div><button type="submit" class="primary">Add to wishlist +</button></form><p class="muted">Requests for movies outside the library. Someone still needs to add them to Plex.</p><div id="wish-list" class="list"></div></section>
+      <footer><span>Made for the miles ahead.</span><span id="footer-drive">No USB folder connected</span></footer>
+    </main>
+  </div>
+  <dialog id="details"><button class="dialog-close" aria-label="Close movie details">×</button><div id="details-body"></div></dialog>
+  <dialog id="confirm"><h2 id="confirm-title">Confirm</h2><p id="confirm-body"></p><div class="dialog-actions"><button id="confirm-no" class="secondary">Cancel</button><button id="confirm-yes" class="danger">Remove</button></div></dialog>
+</body>
+</html>

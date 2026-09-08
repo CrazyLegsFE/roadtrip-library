@@ -1,0 +1,11 @@
+{
+  "name": "roadtrip-library",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/CrazyLegsFE/roadtrip-library.git" },
+  "type": "module",
+  "description": "A home movie library with verified browser-to-USB transfers",
+  "engines": { "node": ">=24" },
+  "scripts": { "start": "node server.mjs", "test": "node --test", "check": "node --check server.mjs && node --check public/app.js && node --check public/transfer.js" }
+}

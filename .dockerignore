@@ -1,0 +1,15 @@
+.env
+.env.*
+.git
+data
+demo-data
+roadtrip-data-backup
+node_modules
+test
+docs
+.github
+scripts
+*.zip
+*.crt
+*.key
+VALIDATION.md

@@ -1,0 +1,13 @@
+services:
+  roadtrip-demo:
+    build: .
+    environment:
+      DEMO_MODE: "true"
+      HOST: 0.0.0.0
+      APP_ORIGIN: http://localhost:8787
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - demo-data:/data
+volumes:
+  demo-data:

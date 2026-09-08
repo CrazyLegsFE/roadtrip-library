@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+data/
+demo-data/
+roadtrip-data-backup/
+node_modules/
+*.log
+*.zip
+*.crt
+*.key
+.DS_Store
+Thumbs.db

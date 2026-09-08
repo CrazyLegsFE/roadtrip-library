@@ -1,0 +1,5 @@
+{$APP_HOST:roadtrip.home.arpa} {
+  tls internal
+  encode gzip
+  reverse_proxy roadtrip:8787
+}

@@ -1,0 +1,14 @@
+name: Feature request
+description: Suggest an improvement to the movie-planning or USB workflow.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What are you trying to do?
+      description: Describe the problem or workflow, including your current workaround.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Suggested improvement
