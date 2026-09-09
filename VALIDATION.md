@@ -16,16 +16,21 @@ Release: 0.1.0. Date: 2026-09-08. Local runtime: Node.js 24.19.0 on Windows.
 
 ## Continuous integration
 
-The [CI workflow](https://github.com/CrazyLegsFE/roadtrip-library/actions/workflows/ci.yml) runs tests on Linux and Windows, validates Compose, builds and smoke-tests the Docker image, and validates Caddy. Refer to the exact commit's run for its status; configuring a workflow is not proof that it passed.
+The [first public CI run](https://github.com/CrazyLegsFE/roadtrip-library/actions/runs/34292475291) passed all three jobs for implementation commit `8b7838a14b7bb2ac73b46b8ebafd487430cb886b`:
+
+- All 27 tests and documentation/syntax checks on Ubuntu.
+- All 27 tests and documentation/syntax checks on Windows.
+- Production/demo Compose validation, Docker image build, demo-container HTTP/range/checksum smoke test, and Caddy configuration validation.
+
+This record was updated after that run; the subsequent change is documentation only. Refer to the [workflow history](https://github.com/CrazyLegsFE/roadtrip-library/actions/workflows/ci.yml) for later commits.
 
 ## Not verified in this environment
 
-- Docker is unavailable on the local development host. Docker and configuration execution is delegated to the linked CI workflow; its result must be checked before release.
 - Real Plex/TrueNAS connection: server address, token, and host mount paths have not been supplied. Plex API tests use a local mock server; demo files are explicitly non-playable test data.
 - Physical USB drive, desktop browser folder permissions, OS sleep/lid behavior, and client certificate trust. The filesystem test adapter models transactional commit/abort behavior; it is not a real browser or USB device.
 - Browser rendering, keyboard interaction, or responsive visual inspection were not performed in the local validation pass.
 - Optional WebMCP registration/execution in a supporting browser. Tools are feature-detected and omitted by unsupported browsers; their browser contract has not been verified.
-- Caddy startup and local certificate installation, which must be performed on the Ubuntu server and client machines.
+- Caddy serving a real household hostname and client certificate installation. Configuration validation passed in CI, but certificate trust must be configured on actual clients.
 
 ## First home validation
 
