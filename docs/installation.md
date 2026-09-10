@@ -8,12 +8,23 @@ The app copies original movie files. It does not transcode, remove DRM, or copy 
 
 ### 1. Configure your folders and Plex
 
-Copy this `roadtrip` folder onto the Ubuntu server. From that folder:
+Copy this `roadtrip` folder onto the Ubuntu server, or download it directly from GitHub with the commands below. For a first installation, paste this into a terminal on your Ubuntu server:
 
 ```sh
-cp .env.example .env
-chmod 600 .env
+mkdir -p ~/docker &&
+cd ~/docker &&
+git clone https://github.com/CrazyLegsFE/roadtrip-library.git &&
+cd roadtrip-library &&
+cp .env.example .env &&
+chmod 600 .env &&
+nano .env
 ```
+
+The `&&` separators stop the sequence if a command fails. These commands download the app into `~/docker/roadtrip-library`, create your private configuration file, and open it in Nano. If you already cloned the repository, open your existing `.env` instead of copying the template over it.
+
+If `git` or `nano` is missing, install them first with `sudo apt update && sudo apt install -y git nano`, then run the commands above.
+
+In Nano, save with **Ctrl+O**, press **Enter**, and exit with **Ctrl+X**. Complete the settings below and the HTTPS setup before starting the containers.
 
 Edit `.env`:
 
