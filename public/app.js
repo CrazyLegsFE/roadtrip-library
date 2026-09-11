@@ -221,7 +221,7 @@ async function sync() {
     const workingSpace = Math.max(...parts.map(p => model.manifest.records[p.id]?.status === 'ready' ? 0 : p.size));
     if ($('#free-space').value && Number($('#free-space').value) * 1e9 < remaining + workingSpace) throw new Error(`Allow about ${bytes(remaining + workingSpace)} free space for the remaining files and browser checkpoint working space. Remove movies explicitly or shorten the list.`);
     model.syncing = true; model.controller = new AbortController();
-    $('#sync-panel').hidden = false; $('#pause').disabled = false;
+    $('#sync-panel').hidden = false; $('#pause').disabled = false; $('#cancel').disabled = false;
     $('#sync-title').textContent = 'Checking your trip list…'; $('#sync-progress').value = 0;
     const guard = new WakeGuard(text => { $('#wake-status').textContent = text; });
     const preventClose = e => { e.preventDefault(); e.returnValue = ''; };
@@ -230,6 +230,7 @@ async function sync() {
       render(); await guard.start();
       for (const [index, part] of parts.entries()) {
         const onProgress = progress => {
+          if (model.controller.signal.aborted) return;
           $('#sync-title').textContent = progress.filename;
           $('#sync-progress').value = Math.round(100 * progress.completed / progress.total);
           $('#sync-detail').textContent = `${index + 1} of ${parts.length} files · ${progress.phase} · ${bytes(progress.completed)} / ${bytes(progress.total)}`;
@@ -245,12 +246,13 @@ async function sync() {
       notice('Your trip list is on the drive. All copied data passed its checks.');
     } catch (e) {
       const paused = model.controller.signal.aborted || e.name === 'AbortError';
-      $('#sync-title').textContent = paused ? 'Paused. Your checkpoints are saved.' : 'Transfer stopped safely.';
+      const cancelled = model.controller.signal.reason === 'cancel';
+      $('#sync-title').textContent = cancelled ? 'Transfer cancelled.' : paused ? 'Paused. Your checkpoints are saved.' : 'Transfer stopped safely.';
       $('#sync-detail').textContent = 'Click Sync trip to USB to check saved data and continue.';
-      notice(paused ? 'Completed checkpoints are kept. The current unsaved checkpoint will be copied again.' : `${e.message} Completed movies and saved checkpoints are kept.`, !paused);
+      notice(cancelled ? 'No more movies will be copied. Completed movies and verified partial copies are kept. Use On the drive to remove unwanted copies.' : paused ? 'Completed checkpoints are kept. The current unsaved checkpoint will be copied again.' : `${e.message} Completed movies and saved checkpoints are kept.`, !paused);
     } finally {
       window.removeEventListener('beforeunload', preventClose); await guard.stop();
-      model.syncing = false; $('#pause').disabled = true;
+      model.syncing = false; $('#pause').disabled = true; $('#cancel').disabled = true;
       try { model.manifest = await loadManifest(model.directory); await persistInventory(); } catch (e) { notice(`Transfer ended, but the drive catalog could not be updated: ${e.message}`, true); }
       render();
     }
@@ -276,7 +278,15 @@ $('#connect').addEventListener('click', () => void guarded(connect));
 $('#rescan').addEventListener('click', () => void guarded(async () => { model.manifest = await loadManifest(model.directory); await persistInventory(); notice('USB catalog updated.'); }));
 $('#drive-select').addEventListener('change', e => { model.driveId = e.target.value; render(); });
 $('#sync').addEventListener('click', () => void guarded(sync));
-$('#pause').addEventListener('click', () => { model.controller?.abort(); $('#pause').disabled = true; });
+function stopTransfer(reason) {
+  if (!model.syncing || model.controller?.signal.aborted) return;
+  model.controller.abort(reason);
+  $('#pause').disabled = true; $('#cancel').disabled = true;
+  $('#sync-title').textContent = reason === 'cancel' ? 'Cancelling transfer…' : 'Pausing transfer…';
+  $('#sync-detail').textContent = 'Waiting for the current USB operation to finish safely. Keep the drive connected; browser disk operations can take time to stop.';
+}
+$('#pause').addEventListener('click', () => stopTransfer('pause'));
+$('#cancel').addEventListener('click', () => stopTransfer('cancel'));
 $('#wish-form').addEventListener('submit', e => { e.preventDefault(); void guarded(async () => { model.state = await api('wishes', { title: $('#wish-title').value, who: who() }); $('#wish-title').value = ''; render(); notice('Added to the family wishlist.'); }); });
 $('.dialog-close').addEventListener('click', () => $('#details').close());
 $('#confirm-no').addEventListener('click', () => $('#confirm').close('no'));
