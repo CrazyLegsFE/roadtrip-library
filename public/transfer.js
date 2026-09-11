@@ -166,7 +166,9 @@ export async function transferPart(directory, manifest, part, signal, onProgress
       writer = await handle.createWritable({ keepExistingData: offset > 0 });
       await writer.truncate(offset);
       await writer.seek(offset);
-      const pending = [], limit = Math.min(part.size, offset + checkpointSize);
+      // Reopening with keepExistingData copies the entire committed prefix.
+      // Grow checkpoints with that prefix to keep cumulative copying linear.
+      const pending = [], limit = Math.min(part.size, offset + Math.max(checkpointSize, offset));
       while (offset < limit) {
         aborted(signal);
         const end = Math.min(part.size, offset + CHUNK_SIZE) - 1;
