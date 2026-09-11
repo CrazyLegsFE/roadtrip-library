@@ -7,7 +7,7 @@ docker compose logs --tail=100 roadtrip
 docker compose ps
 ```
 
-The `/health` endpoint checks that the web service is running; it does not claim Plex or a TrueNAS mount is available. **Refresh library** checks source mount sentinels and Plex access. File transfer also checks that the current source is available and unchanged.
+The `/health` endpoint checks that the web service is running; it does not claim Plex or a media source is available. **Refresh library** checks source mount sentinels and Plex access. File transfer also checks that the current source is available and unchanged.
 
 Back up the `app-data` volume for trip lists, wishlist entries, saved drive inventories, cached metadata/posters, and the session signing key. Caddy uses its own persistent volumes. Stopping/recreating containers preserves those volumes; do not remove volumes when updating. Rotate `APP_PASSWORD` and recreate the service to invalidate existing sessions.
 
