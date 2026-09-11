@@ -11,7 +11,7 @@ Compose reads `.env`; Node reads process environment variables. Keep real config
 | `PLEX_URL` | Plex URL reachable inside Docker. The included `host.docker.internal` mapping can reach Plex on the Docker host. |
 | `PLEX_TOKEN` | Server-side Plex authentication token. |
 | `PLEX_SECTION_IDS` | Optional comma-separated movie-library IDs. Blank includes all movie libraries; TV is ignored. |
-| `MEDIA_SOURCE` | Existing absolute media mount on the Docker host, exposed at `/media/movies`. |
+| `MEDIA_SOURCE` | Existing absolute media folder on the Docker host (local storage or a mounted network share), exposed at `/media/movies`. |
 | `MEDIA_PATH_MAPPINGS` | JSON array of `plex`, `local`, and optional `sentinel` values. |
 
 ## The three paths
@@ -33,7 +33,9 @@ MEDIA_PATH_MAPPINGS='[{"plex":"/movies","local":"/media/movies","sentinel":".roa
 
 Use the path reported by Plex's media information, not an `smb://` URL. The longest matching prefix at a directory boundary wins. Resolved symlinks must remain inside configured media roots.
 
-## Multiple shares
+## Multiple source folders
+
+Local folders, separately mounted disks, and NFS or SMB shares can be combined. Each source needs a read-only container bind mount and a corresponding path mapping.
 
 Add another read-only bind to `roadtrip.volumes` in `compose.yaml`:
 
@@ -52,7 +54,7 @@ Then include both mappings:
 MEDIA_PATH_MAPPINGS='[{"plex":"/movies","local":"/media/movies","sentinel":".roadtrip-media-root"},{"plex":"/kids","local":"/media/kids","sentinel":".roadtrip-media-root"}]'
 ```
 
-Create each sentinel deliberately on its mounted source share. A missing marker blocks refresh and preserves the old catalog. Do not create markers in empty local mountpoints to silence an unavailable-NAS error.
+Create each configured sentinel once in its actual source folder, including local folders. For network shares and separately mounted disks, verify the expected mount first; for folders intentionally on the host root filesystem, no separate mount is needed. A missing marker blocks refresh and preserves the old catalog. Do not create markers in empty mountpoints to silence an unavailable-share or disk error. See [storage and marker setup](installation.md#local-storage-or-network-shares).
 
 ## Direct Node settings
 
@@ -70,4 +72,4 @@ Direct Node startup does not translate `APP_HOST` into `APP_ORIGIN`. Set the ful
 
 The smallest available Plex version is the default. Open movie details to select another. A missing part makes a multi-part version unavailable. Refresh after source changes.
 
-The container runs as UID/GID 1000. Grant read/traversal access to media through Samba mount options or a suitable supplemental group. The media sources should remain read-only. Run one application replica per data directory.
+The container runs as UID/GID 1000. Grant read/traversal access to media through local permissions, NFS permissions/UID mapping, SMB mount options, or a suitable supplemental group. The media sources should remain read-only. Run one application replica per data directory.
