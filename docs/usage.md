@@ -2,6 +2,14 @@
 
 [Back to README](../README.md)
 
+## Optional SSD staging
+
+In the movie library, expand **Copy settings**, choose **Use SSD staging**, and select a dedicated empty folder on your computer's SSD (not on the USB). Set a temporary-space budget in GB; 16 GB is a useful starting point. The budget accounts for about twice a movie's size plus existing staging files and metadata because browsers may create working copies. It does not reserve disk space or measure free space. Check available SSD space in your file manager. Re-select the same staging folder after reloading to resume a staged download.
+
+Movies are downloaded and verified on SSD one at a time, then copied to USB in a single write transaction and verified there. Only after USB verification succeeds is that staged movie removed. If the budget is too small, increase it, clear old temporary files, or disable staging for direct copying. Unrelated files are never removed by **Clear temporary files**.
+
+Pausing or cancelling preserves staged downloads. An interrupted final USB write restarts from its previous saved checkpoint (from zero for a new movie); it does not save new intermediate USB checkpoints. FAT32 file-size limits still apply. Select physically separate SSD and USB folders; the browser cannot determine which physical disk holds a selected folder. Staging is optional and its speed benefit depends on the drives. Initial verification uses automated filesystem simulations; physical USB/browser performance still needs testing.
+
 1. Open the configured HTTPS address and sign in with the family password.
 2. Click **Refresh library**. This imports movie metadata and file versions. Posters are cached as they are viewed.
 3. Enter your name under **Who's picking?** Browse movies and add selections to **Our trip list**.
