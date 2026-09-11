@@ -26,7 +26,7 @@ No companion application, paid metadata API, JavaScript dependency installation,
 
 ```mermaid
 flowchart LR
-  NAS["NAS / Samba share"] -->|"Mounted read-only"| App["Roadtrip home server"]
+  NAS["Local storage / NFS / SMB share"] -->|"Read-only container bind mount"| App["Roadtrip home server"]
   Plex["Plex metadata & artwork"] --> App
   App -->|"HTTPS + verified chunks"| Browser["Chrome / Edge on a laptop"]
   Browser -->|"Folder permission"| USB["USB stick"]
