@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-You need Docker Engine with the Compose plugin on Ubuntu, an existing working Samba mount, the Plex URL and token, and an HTTPS address trusted by the client computers.
+You need Docker Engine with the Compose plugin on Ubuntu, existing media folders on local storage or mounted network shares (NFS or SMB/CIFS), the Plex URL and token, and an HTTPS address trusted by the client computers.
 
 The app copies original movie files. It does not transcode, remove DRM, or copy separate subtitles/extras. Multi-part Plex media is copied as separate numbered parts. Check that your tablet/VLC can play the chosen version. A filesystem with a 4 GB per-file limit cannot hold larger movies; use an appropriate filesystem supported by your tablet, commonly exFAT.
 
@@ -35,7 +35,7 @@ Edit `.env`:
 | `PLEX_URL` | URL reachable from the container. Default example reaches Plex on the Docker host. |
 | `PLEX_TOKEN` | Your Plex authentication token; it stays on the server. |
 | `PLEX_SECTION_IDS` | Optional comma-separated movie library section IDs. Blank includes all movie libraries. |
-| `MEDIA_SOURCE` | Existing movie mount path on Ubuntu. |
+| `MEDIA_SOURCE` | Existing absolute movie folder path on the Ubuntu Docker host, on local storage or a mounted network share. |
 | `MEDIA_PATH_MAPPINGS` | JSON mapping Plex's file-path prefix to the container's file-path prefix. |
 
 For example, if Plex reports `/mnt/truenas/movies/Example (2024)/Example.mkv` and that folder is mounted into the container at `/media/movies`:
@@ -45,18 +45,42 @@ MEDIA_SOURCE=/mnt/truenas/movies
 MEDIA_PATH_MAPPINGS='[{"plex":"/mnt/truenas/movies","local":"/media/movies","sentinel":".roadtrip-media-root"}]'
 ```
 
-After confirming that the TrueNAS share is actually mounted, create the sentinel once **on that share**:
+#### Local storage or network shares
+
+Roadtrip supports both. Set `MEDIA_SOURCE` to an existing folder on the Docker host; a NAS is not required.
+
+- **Local storage:** use your actual movie folder, for example `/srv/movies`. Confirm it contains your movies. A folder on Ubuntu's root filesystem is valid. If the folder is on a separately mounted disk, first verify that the expected disk is mounted.
+- **Network storage:** mount the share on the Docker host first. NFS (`nfs`/`nfs4`) and Samba/SMB (`cifs`) both work. The path must be the host's mounted folder, not a NAS-internal path or an `smb://` URL.
+
+For a network share or separately mounted local disk, inspect the mount first (replace the example path):
 
 ```sh
 findmnt -T /mnt/truenas/movies
+```
+
+Check the output before continuing: it must show the expected NAS/export or local disk. If you expected a separate mount but see Ubuntu's root filesystem, restore the mount first. Root filesystem output is normal for media intentionally stored on that filesystem.
+
+#### Create the marker for each source
+
+The supplied mappings use a sentinel: an empty file named `.roadtrip-media-root`. Create it once in each configured source folder, whether local or network storage, after confirming that the folder contains the intended media and any required mount is present.
+
+For the network example above:
+
+```sh
 touch /mnt/truenas/movies/.roadtrip-media-root
 ```
 
-Replace those example paths with your actual mount. The sentinel prevents a missing network mount from silently replacing the cached library with an empty one. It is never created automatically by the application.
+For local movies at `/srv/movies`, use this instead:
 
-If Plex itself runs in a container, its paths may differ from Ubuntu's paths. The `plex` prefix must match what Plex reports; `MEDIA_SOURCE` must be the Ubuntu host path; `local` must match the Roadtrip container mount. For multiple source folders, add read-only bind mounts in `compose.yaml` and corresponding mappings in the JSON array. Use a sentinel for each share.
+```sh
+touch /srv/movies/.roadtrip-media-root
+```
 
-The container runs as UID/GID 1000. Give it read and traversal permissions on the mounted media. Configure suitable Samba mount ownership/modes or an appropriate supplemental group; do not make the sources writable for this app.
+Use your own paths and repeat for every source folder. Do not create a marker in an empty mountpoint while its disk or share is disconnected. A missing configured marker blocks library refresh and preserves the cached catalog. The application never creates markers automatically.
+
+If Plex itself runs in a container, its paths may differ from Ubuntu's paths. The `plex` prefix must match what Plex reports; `MEDIA_SOURCE` must be the Ubuntu host path; `local` must match the Roadtrip container mount. For multiple source folders, add read-only bind mounts in `compose.yaml` and corresponding mappings in the JSON array. Use a sentinel for each source folder. See [multiple source folders](configuration.md#multiple-source-folders).
+
+The container runs as UID/GID 1000. Give it read and directory traversal permissions on the media. Use suitable local file permissions, NFS server permissions/UID mapping, or SMB mount ownership/modes, and a supplemental group where appropriate. Keep the container's media bind mounts read-only.
 
 Plex documents token access at [Finding an authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
 
