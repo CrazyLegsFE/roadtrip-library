@@ -4,12 +4,15 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { stagedTransfer, clearStaging } from '../public/staging.js';
 import { createApp } from '../server.mjs';
 import { loadManifest, saveManifest, connectManifest, requestSignal, validateManifest, transferPart, adoptExisting, WakeGuard, CHUNK_SIZE } from '../public/transfer.js';
 
 // Transactional adapter models browser writes: bytes commit only on close;
 // abort and write failures leave the previous committed file untouched.
 class Directory {
+  async *entries() { for (const name of this.files.keys()) yield [name, { kind: 'file', getFile: async () => new Blob([this.files.get(name)]) }]; }
+  async removeEntry(name) { this.files.delete(name); }
   constructor() { this.files = new Map(); this.failAfter = Infinity; this.written = 0; this.failManifest = false; this.preservedBytes = 0; }
   async getFileHandle(name, { create = false } = {}) {
     if (!this.files.has(name)) { if (!create) throw new DOMException('Missing', 'NotFoundError'); this.files.set(name, Buffer.alloc(0)); }
@@ -57,6 +60,36 @@ function source(t, size = CHUNK_SIZE * 3 + 97) {
   t.after(() => { globalThis.fetch = originalFetch; });
   return { part, content, requests, change: () => { changed = true; }, corrupt: () => { corrupt = true; } };
 }
+test('SSD staging survives USB failure, retries locally, and cleans only its movie', async t => {
+  const src = source(t), staging = new Directory(), usb = new Directory();
+  await saveManifest(staging, await loadManifest(staging));
+  staging.files.set('notes.txt', Buffer.from('keep me'));
+  const manifest = await loadManifest(usb);
+  usb.failAfter = CHUNK_SIZE;
+  await assert.rejects(stagedTransfer(staging, usb, manifest, src.part, 1e9), { name: 'QuotaExceededError' });
+  assert.deepEqual(staging.files.get(src.part.filename), src.content);
+  assert.equal((await loadManifest(staging)).records[src.part.id].status, 'ready');
+  src.requests.length = 0; usb.failAfter = Infinity;
+  await stagedTransfer(staging, usb, await loadManifest(usb), src.part, 1e9);
+  assert.equal(src.requests.length, 0);
+  assert.deepEqual(usb.files.get(src.part.filename), src.content);
+  assert.equal(usb.preservedBytes, 0);
+  assert.equal(staging.files.has(src.part.filename), false);
+  assert.equal(staging.files.get('notes.txt').toString(), 'keep me');
+  assert.equal((await loadManifest(usb)).records[src.part.id].status, 'ready');
+});
+test('staging budget rejects before downloading and clear preserves unrelated files', async t => {
+  const src = source(t, 100), staging = new Directory(), usb = new Directory();
+  await saveManifest(staging, await loadManifest(staging));
+  await assert.rejects(stagedTransfer(staging, usb, await loadManifest(usb), src.part, 1), /budget/);
+  assert.equal(src.requests.length, 0);
+  const manifest = await loadManifest(staging);
+  await transferPart(staging, manifest, src.part);
+  staging.files.set('notes.txt', Buffer.from('keep'));
+  await clearStaging(staging, manifest);
+  assert.equal(staging.files.has(src.part.filename), false);
+  assert.equal(staging.files.get('notes.txt').toString(), 'keep');
+});
 test('a completed transfer matches source bytes and records committed checksums', async t => {
   const src = source(t), directory = new Directory(), manifest = await loadManifest(directory);
   await transferPart(directory, manifest, src.part, undefined, () => {}, { checkpointSize: CHUNK_SIZE * 2 });
