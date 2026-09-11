@@ -16,7 +16,9 @@ Check the token and `PLEX_URL` from the Docker network. `localhost` inside a con
 
 ## Missing mount or sentinel
 
-Inspect the host mount with `findmnt -T /your/media/path`. Restore the NAS mount and verify its marker exists on the actual share. Do not create an empty local replacement to silence the error. Recreating the container may be necessary after the share is remounted.
+For network shares or separately mounted local disks, inspect the host mount with `findmnt -T /your/media/path` and confirm the expected share or disk is present. NFS (`nfs`/`nfs4`) and SMB (`cifs`) are both supported. Restore a missing mount before checking its marker; do not create a marker in an empty fallback mountpoint. Recreating the container may be necessary after remounting.
+
+For media intentionally stored on the host's root filesystem, root filesystem output is normal. Verify the source folder contains your movies and the configured sentinel exists there. For either storage type, check that the container user can read the marker and traverse the directories.
 
 ## Posters appear but files are unavailable
 
