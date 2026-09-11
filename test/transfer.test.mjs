@@ -10,13 +10,14 @@ import { loadManifest, saveManifest, connectManifest, requestSignal, validateMan
 // Transactional adapter models browser writes: bytes commit only on close;
 // abort and write failures leave the previous committed file untouched.
 class Directory {
-  constructor() { this.files = new Map(); this.failAfter = Infinity; this.written = 0; this.failManifest = false; }
+  constructor() { this.files = new Map(); this.failAfter = Infinity; this.written = 0; this.failManifest = false; this.preservedBytes = 0; }
   async getFileHandle(name, { create = false } = {}) {
     if (!this.files.has(name)) { if (!create) throw new DOMException('Missing', 'NotFoundError'); this.files.set(name, Buffer.alloc(0)); }
     const directory = this;
     return {
       async getFile() { return new Blob([directory.files.get(name)]); },
       async createWritable({ keepExistingData = false } = {}) {
+        if (keepExistingData && name !== '.roadtrip-drive.json') directory.preservedBytes += directory.files.get(name).length;
         let staged = keepExistingData ? Buffer.from(directory.files.get(name)) : Buffer.alloc(0), offset = 0, closed = false;
         return {
           async truncate(size) { const next = Buffer.alloc(size); staged.copy(next, 0, 0, size); staged = next; },
@@ -66,6 +67,20 @@ test('a completed transfer matches source bytes and records committed checksums'
   src.requests.length = 0;
   const result = await transferPart(directory, saved, src.part);
   assert.equal(result.skipped, true); assert.equal(src.requests.length, 0);
+});
+test('growing checkpoints bound repeated USB copying and resume after a later failure', async t => {
+  const src = source(t, CHUNK_SIZE * 9 + 97), directory = new Directory();
+  directory.failAfter = CHUNK_SIZE * 6;
+  await assert.rejects(transferPart(directory, await loadManifest(directory), src.part, undefined, () => {}, { checkpointSize: CHUNK_SIZE }), { name: 'QuotaExceededError' });
+  const saved = await loadManifest(directory);
+  assert.equal(saved.records[src.part.id].chunks.length, 4);
+  assert.equal(directory.files.get(src.part.filename).length, CHUNK_SIZE * 4);
+  directory.failAfter = Infinity; directory.preservedBytes = 0; src.requests.length = 0;
+  await transferPart(directory, saved, src.part, undefined, () => {}, { checkpointSize: CHUNK_SIZE });
+  assert.equal(src.requests[0], CHUNK_SIZE * 4);
+  assert.deepEqual(directory.files.get(src.part.filename), src.content);
+  assert.ok(directory.preservedBytes < 2 * src.part.size);
+  assert.equal((await loadManifest(directory)).records[src.part.id].status, 'ready');
 });
 test('disk full preserves committed checkpoint; a fresh session resumes at that offset', async t => {
   const src = source(t), directory = new Directory(), manifest = await loadManifest(directory);
