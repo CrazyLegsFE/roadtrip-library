@@ -163,7 +163,9 @@ export async function transferPart(directory, manifest, part, signal, onProgress
   try {
     while (offset < part.size) {
       aborted(signal);
+      onProgress({ phase: 'Preparing USB file (browser may copy saved data)', completed: offset, total: part.size, filename: part.filename });
       writer = await handle.createWritable({ keepExistingData: offset > 0 });
+      aborted(signal);
       await writer.truncate(offset);
       await writer.seek(offset);
       // Reopening with keepExistingData copies the entire committed prefix.
