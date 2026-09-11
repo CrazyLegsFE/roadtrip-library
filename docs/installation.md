@@ -97,6 +97,89 @@ docker compose up -d --build
 
 Configure your existing proxy to serve `https://<APP_HOST>` and forward to `http://127.0.0.1:8787` on the Ubuntu host. If your proxy is in a different container, join it to the Compose network and use `http://roadtrip:8787`; its own `127.0.0.1` is not the Ubuntu host. Avoid opening the app directly to the internet. The public HTTPS origin must exactly match `APP_HOST`, including any nondefault port used in a custom configuration.
 
+#### Nginx Proxy Manager
+
+If you already use Nginx Proxy Manager (NPM), let it handle HTTPS. Start Roadtrip without the `tls` profile; the optional Caddy service is not needed.
+
+**Set the browser hostname**
+
+In Roadtrip's `.env`, set the hostname you will enter in your browser, with no scheme or trailing slash:
+
+```dotenv
+APP_HOST=roadtrip.example.com
+```
+
+Replace this example with your own hostname. Configure your local DNS to resolve it to **the NPM server's LAN IP**. The hostname must match the NPM proxy host and its certificate.
+
+**Choose how NPM reaches Roadtrip**
+
+If both containers run on the **same Docker host**, attach Roadtrip to an existing Docker network used by the NPM application container. List networks with:
+
+```sh
+docker network ls
+```
+
+The following example assumes that network is named `npm_default`; replace it with your actual NPM network. Merge these additions into Roadtrip's `compose.yaml`, preserving all existing settings, volumes, and media mounts:
+
+```yaml
+services:
+  roadtrip:
+    # Keep the existing roadtrip settings here.
+    networks:
+      - default
+      - npm_proxy
+
+networks:
+  npm_proxy:
+    external: true
+    name: npm_default
+```
+
+The top-level `networks:` section belongs alongside `services:` and `volumes:`. Keep any existing network definitions. NPM's application container must be attached to the selected network. Leave Roadtrip's existing loopback port binding as it is; NPM will connect directly to `roadtrip:8787`. This follows [NPM's shared Docker network guidance](https://nginxproxymanager.com/advanced-config/#best-practice-use-a-docker-network).
+
+If NPM runs on a **different machine**, replace Roadtrip's existing port binding in `compose.yaml` with the Roadtrip server's actual LAN IP:
+
+```yaml
+    ports:
+      - "192.168.1.50:8787:8787"
+```
+
+Here `192.168.1.50` is only an example. The default `127.0.0.1:8787:8787` binding cannot be reached from another machine. Allow the NPM server to reach this port on your LAN; do not forward port 8787 from your router to the internet. A shared Docker bridge network does not connect separate Docker hosts.
+
+After making the chosen changes, run from the Roadtrip folder:
+
+```sh
+docker compose config --quiet &&
+docker compose up -d --build
+```
+
+**Create the proxy host**
+
+In NPM, open **Hosts → Proxy Hosts → Add Proxy Host** and enter:
+
+| Field | Value |
+|---|---|
+| Domain Names | Your `APP_HOST`, for example `roadtrip.example.com` |
+| Scheme | `http` (NPM provides HTTPS to the browser) |
+| Forward Hostname / IP | `roadtrip` on a shared Docker network, or the Roadtrip server's LAN IP for a separate machine |
+| Forward Port | `8787` |
+| Cache Assets | Off |
+| Websockets Support | Not required by Roadtrip |
+
+Use a dedicated hostname at its root, not a path such as `/roadtrip`. NPM's container-local `127.0.0.1` points to NPM itself, not the Roadtrip container.
+
+On the **SSL** tab, select a trusted certificate covering the hostname and enable **Force SSL**, then save. You can use an existing certificate or request one through NPM. For a LAN-only service under a domain you control, a Let's Encrypt DNS challenge can validate domain ownership without exposing Roadtrip publicly; use a DNS provider supported by NPM and its required credentials. Alternatively, import a certificate from your own CA and trust that CA on every syncing computer. Let's Encrypt cannot issue a certificate for `roadtrip.home.arpa`; that hostname needs a trusted private CA certificate. See [NPM's certificate options](https://nginxproxymanager.com/guide/) and [Let's Encrypt DNS validation](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge).
+
+Leave custom locations and Advanced settings empty initially. Roadtrip transfers downloads in chunks and does not require an increased upload-size limit.
+
+**Verify the setup**
+
+Open `https://your-hostname/health` and check that it returns the application's health response without a certificate warning. Then open the home page, sign in, refresh the library, and try a small movie transfer in desktop Chrome or Edge.
+
+- **502 Bad Gateway:** check the forward scheme/host/port, shared network membership, or the LAN port binding and connectivity.
+- **Login or origin errors:** make sure `APP_HOST` exactly matches the browser hostname, then run `docker compose up -d` to apply any `.env` changes.
+- **USB folder access unavailable:** use desktop Chrome/Edge over trusted HTTPS; a certificate warning or direct HTTP LAN address is insufficient.
+
 **If you do not have a reverse proxy:**
 
 The optional Caddy service provides local HTTPS. It needs free ports 80 and 443 on Ubuntu.
