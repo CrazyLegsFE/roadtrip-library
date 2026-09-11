@@ -304,7 +304,7 @@ export async function createApp(options = {}) {
         } finally { await file.close(); }
         return;
       }
-      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/transfer.js': ['transfer.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/transfer.js': ['transfer.js', 'text/javascript'], '/staging.js': ['staging.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
       if (req.method === 'GET' && files[url.pathname]) {
         const [name, type] = files[url.pathname];
         res.writeHead(200, { 'Content-Type': type + '; charset=utf-8' }); return res.end(await fs.readFile(path.join(HERE, 'public', name)));
