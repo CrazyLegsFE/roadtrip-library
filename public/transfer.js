@@ -139,7 +139,7 @@ export async function adoptExisting(directory, manifest, part, filename, signal,
   await saveManifest(directory, { ...manifest, records: { ...manifest.records, [part.id]: record } });
   manifest.records[part.id] = record;
 }
-export async function transferPart(directory, manifest, part, signal, onProgress = () => {}, { checkpointSize = CHECKPOINT_SIZE } = {}) {
+export async function transferPart(directory, manifest, part, signal, onProgress = () => {}, { checkpointSize = CHECKPOINT_SIZE, readChunk = fetchPart } = {}) {
   aborted(signal);
   if (!safeName(part.filename)) throw new Error('The server supplied an unsafe filename.');
   const info = await fetch(`/api/files/${encodeURIComponent(part.id)}?version=${encodeURIComponent(part.version)}&info=1`, { signal: requestSignal(signal) });
@@ -174,7 +174,7 @@ export async function transferPart(directory, manifest, part, signal, onProgress
       while (offset < limit) {
         aborted(signal);
         const end = Math.min(part.size, offset + CHUNK_SIZE) - 1;
-        const chunk = await fetchPart(part, offset, end, signal);
+        const chunk = await readChunk(part, offset, end, signal);
         await writer.write(chunk.buffer);
         pending.push({ start: offset, length: chunk.buffer.byteLength, hash: chunk.hash });
         offset = end + 1;
