@@ -17,7 +17,7 @@ You can use any browser to browse and choose movies. Desktop Chrome/Edge with tr
 
 The server sends at most 8 MiB per request and hashes each chunk with SHA-256. The browser checks the received checksum, writes data, closes the file at a checkpoint, then reads back the committed bytes before saving their hashes in `.roadtrip-drive.json`.
 
-- Checkpoints are every 256 MiB, and at the end of a file.
+- The first checkpoint is at 256 MiB. Subsequent intervals grow with the committed file size (256 MiB, 512 MiB, 1 GiB, and so on), with a final checkpoint at EOF. This reduces repeated copying of existing USB data. An interruption late in a large movie can require repeating a larger unsaved interval; completed checkpoints remain resumable.
 - A pause, disconnect, refresh, or sleep can discard the current **uncommitted** checkpoint. Previously committed checkpoints are kept.
 - To resume, reconnect the same Movies folder, open the trip list, and click Sync. The app verifies all saved checkpoints before continuing.
 - If a movie is already complete, its saved checksums are checked before it is skipped.
