@@ -6,7 +6,7 @@ One Node.js 24 process serves a framework-free browser client. There are no thir
 
 ## Server and state
 
-`server.mjs` handles login, Plex refresh, cached posters, serialized state changes, and bounded range responses. It reads existing media mounts; it does not mount Samba shares itself.
+`server.mjs` handles login, Plex refresh, cached posters, serialized state changes, and bounded range responses. It reads existing host media folders on local storage or mounted network shares. It does not mount disks, NFS exports, or SMB shares itself.
 
 Plex tokens stay on the server. Resource URLs must remain on the configured Plex origin; redirects are rejected. Files are addressed by catalog part ID. Mapped paths and resolved symlink targets must remain inside configured media roots.
 
