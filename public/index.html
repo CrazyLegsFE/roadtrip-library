@@ -38,6 +38,11 @@
         <div class="sync-meta"><span id="sync-detail"></span><span id="wake-status" role="status"></span></div><p class="hint">Keep this tab and your laptop lid open. Verified checkpoints let you pick up after an interruption.</p>
       </section>
       <section id="library-view">
+        <details class="trip-summary"><summary>Copy settings · optional SSD staging</summary>
+          <div class="space-field"><label><input id="stage-enabled" type="checkbox"> Use SSD staging</label><label for="stage-budget">Temporary space budget (GB)</label><input id="stage-budget" type="number" min="1" step="1" value="16" list="stage-budgets"><datalist id="stage-budgets"><option value="2"><option value="4"><option value="8"><option value="16"><option value="32"></datalist></div>
+          <button id="stage-folder" class="secondary">Choose SSD folder</button><button id="stage-clear" class="secondary">Clear temporary files</button>
+          <p id="stage-status" class="hint">Choose a dedicated folder on your SSD. Budget includes browser working copies (about twice the largest movie). Space is not reserved; check free space in your file manager. Verified USB copies are cleaned from staging automatically. Interrupted USB writes restart from their last saved checkpoint; the SSD download is kept.</p>
+        </details>
         <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search titles, genres, or years…" aria-label="Search movies"></label><select id="genre" aria-label="Filter by genre"><option value="">All genres</option></select><select id="sort" aria-label="Sort movies"><option value="title">Title A–Z</option><option value="year">Newest first</option><option value="size">Smallest files</option></select></div>
         <div class="section-line"><h2 id="results-title">Your movie library</h2><span id="updated" class="muted"></span></div>
         <div id="movie-grid" class="movie-grid"></div><button id="more" class="secondary load-more" hidden>Show more movies</button>
