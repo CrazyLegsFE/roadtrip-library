@@ -31,7 +31,7 @@ The password and random seed derive an HMAC session key. Cookies last seven days
 2. Check saved source identity and rehash the committed USB prefix before resuming.
 3. Request an explicit range of at most 8 MiB.
 4. Require HTTP 206, exact Content-Range, expected ETag, and `X-Chunk-SHA256`.
-5. Hash received bytes before writing; commit every 256 MiB and at EOF.
+5. Hash received bytes before writing; commit after an interval of max(256 MiB, committed offset), and at EOF. Growing intervals bound the total prefix bytes copied by keepExistingData to less than twice the movie size in an uninterrupted transfer. Larger unsaved intervals may need repeating after interruption.
 6. Close the writable stream, read back committed chunks, and only then save checkpoint hashes.
 7. At EOF, check output size and source availability/version before marking ready.
 
