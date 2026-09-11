@@ -1,4 +1,29 @@
 import { loadManifest, saveManifest, connectManifest, scanDirectory, transferPart, adoptExisting, WakeGuard, maybeFile } from './transfer.js';
+import { stagedTransfer, clearStaging } from './staging.js';
+
+let stagingDirectory = null;
+document.addEventListener('DOMContentLoaded', () => {
+  $('#stage-folder').addEventListener('click', () => void guarded(async () => {
+    if (model.syncing) throw new Error('Stop the transfer before changing staging folders.');
+    const folder = await window.showDirectoryPicker({ id: 'roadtrip-staging', mode: 'readwrite' });
+    if (model.directory && (await folder.isSameEntry(model.directory) || await folder.resolve(model.directory) !== null || await model.directory.resolve(folder) !== null)) throw new Error('Choose an SSD folder separate from the USB folder.');
+    await connectManifest(folder);
+    stagingDirectory = folder;
+    $('#stage-folder').textContent = `SSD folder: ${folder.name}`;
+    $('#stage-enabled').checked = true;
+  }));
+  $('#stage-clear').addEventListener('click', () => void guarded(async () => {
+    if (model.syncing) throw new Error('Stop the transfer before clearing staging.');
+    if (!stagingDirectory) throw new Error('Choose your staging folder first.');
+    if (!await confirmAction('Clear temporary movies?', 'Remove Roadtrip-managed movies from the selected staging folder? Unrelated files and the USB copies are kept.')) return;
+    const manifest = await loadManifest(stagingDirectory);
+    await navigator.locks.request(`roadtrip:${manifest.id}`, { ifAvailable: true }, async lock => {
+      if (!lock) throw new Error('Another tab is using this staging folder.');
+      await clearStaging(stagingDirectory, await loadManifest(stagingDirectory));
+    });
+    notice('Temporary movies cleared.');
+  }));
+});
 
 const $ = selector => document.querySelector(selector);
 const bytes = n => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${n.toLocaleString()} bytes`;
@@ -214,6 +239,10 @@ async function sync() {
   if (!model.directory) { await connect(); if (!model.directory) return; }
   const parts = selectedParts();
   if (!parts.length) throw new Error('There are no available files in the trip list.');
+  const useStaging = $('#stage-enabled').checked;
+  const stageBudget = Number($('#stage-budget').value) * 1e9;
+  if (useStaging && !stagingDirectory) throw new Error('Choose a dedicated temporary folder on your SSD first.');
+  if (useStaging && (await stagingDirectory.isSameEntry(model.directory) || await stagingDirectory.resolve(model.directory) !== null || await model.directory.resolve(stagingDirectory) !== null)) throw new Error('The SSD staging folder and USB folder must be separate, not nested.');
   for (const pick of model.state.picks) if (!model.library.movies.find(m => m.id === pick.movieId)?.variants.find(v => v.id === pick.variantId)?.available) throw new Error('The trip list contains unavailable selections. Remove them or refresh the library before syncing.');
   await withDriveLock(async () => {
     model.manifest = await loadManifest(model.directory);
@@ -239,7 +268,13 @@ async function sync() {
           const candidate = model.files.find(f => f.size === part.size && (f.partId === part.id || [part.filename, part.originalName].some(n => n && n.toLowerCase() === f.name.split('/').at(-1).toLowerCase())));
           if (candidate) await adoptExisting(model.directory, model.manifest, part, candidate.name, model.controller.signal, onProgress);
         }
-        await transferPart(model.directory, model.manifest, part, model.controller.signal, onProgress);
+        if (useStaging && model.manifest.records[part.id]?.status !== 'ready') {
+          const stageManifest = await loadManifest(stagingDirectory);
+          await navigator.locks.request(`roadtrip:${stageManifest.id}`, { ifAvailable: true }, async lock => {
+            if (!lock) throw new Error('Another tab is using this staging folder.');
+            await stagedTransfer(stagingDirectory, model.directory, model.manifest, part, stageBudget, model.controller.signal, onProgress);
+          });
+        } else await transferPart(model.directory, model.manifest, part, model.controller.signal, onProgress);
       }
       $('#sync-title').textContent = 'All packed. Enjoy the trip.';
       $('#sync-detail').textContent = `${parts.length} files checked and ready. Eject your USB stick using your computer’s file manager.`;
