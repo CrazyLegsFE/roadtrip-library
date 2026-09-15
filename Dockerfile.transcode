@@ -1,6 +1,7 @@
-FROM node:24-alpine
+FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-ENV NODE_ENV=production PORT=8787 DATA_DIR=/data
+ENV NODE_ENV=production PORT=8787 DATA_DIR=/data TRANSCODE_ENABLED=true
 COPY --chown=node:node package.json server.mjs transcode.mjs ./
 COPY --chown=node:node public ./public
 RUN mkdir /data && chown node:node /data

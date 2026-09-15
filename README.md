@@ -82,7 +82,8 @@ After an interruption, reconnect the same folder and click Sync. Roadtrip checks
 
 | Guide | Covers |
 |---|---|
-| [Installation](docs/installation.md) | Docker, NAS mounts, HTTPS and first startup |
+| [Installation](docs/installation.md) | Docker, local/network storage, HTTPS and first startup |
+| [Transcoding and Settings](docs/transcoding.md) | Tablet copies, NVIDIA GPU, conversion cache, and optional SSD staging |
 | [Configuration](docs/configuration.md) | Environment variables, multiple shares and Plex paths |
 | [Usage and recovery](docs/usage.md) | Family picks, matching, syncing and pause/resume |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and safe recovery |

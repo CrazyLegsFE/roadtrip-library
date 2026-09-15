@@ -3,6 +3,14 @@ import { stagedTransfer, clearStaging } from './staging.js';
 
 let stagingDirectory = null;
 document.addEventListener('DOMContentLoaded', () => {
+  try { const settings = JSON.parse(localStorage.getItem('roadtrip-copy-settings') || '{}'); $('#stage-enabled').checked = settings.enabled === true; if (Number.isFinite(settings.budget) && settings.budget >= 1) $('#stage-budget').value = settings.budget; } catch {}
+  const saveCopySettings = () => { try { localStorage.setItem('roadtrip-copy-settings', JSON.stringify({ enabled: $('#stage-enabled').checked, budget: Number($('#stage-budget').value) })); } catch {} };
+  $('#stage-enabled').addEventListener('change', saveCopySettings);
+  $('#stage-budget').addEventListener('change', saveCopySettings);
+  $('#open-settings').addEventListener('click', () => { $('#settings').showModal(); for (const id of ['stage-enabled', 'stage-budget', 'stage-folder', 'stage-clear']) $('#' + id).disabled = model.syncing; void guarded(loadTranscodes); });
+  $('#close-settings').addEventListener('click', () => $('#settings').close());
+  $('#reload-transcodes').addEventListener('click', () => void guarded(loadTranscodes));
+  $('#save-transcode-settings').addEventListener('click', () => void guarded(async () => { await api('transcodes/settings', { encoder: $('#transcode-encoder').value, cacheGB: Number($('#transcode-budget').value) }); await loadTranscodes(); }));
   $('#stage-folder').addEventListener('click', () => void guarded(async () => {
     if (model.syncing) throw new Error('Stop the transfer before changing staging folders.');
     const folder = await window.showDirectoryPicker({ id: 'roadtrip-staging', mode: 'readwrite' });
@@ -10,7 +18,6 @@ document.addEventListener('DOMContentLoaded', () => {
     await connectManifest(folder);
     stagingDirectory = folder;
     $('#stage-folder').textContent = `SSD folder: ${folder.name}`;
-    $('#stage-enabled').checked = true;
   }));
   $('#stage-clear').addEventListener('click', () => void guarded(async () => {
     if (model.syncing) throw new Error('Stop the transfer before clearing staging.');
@@ -24,6 +31,20 @@ document.addEventListener('DOMContentLoaded', () => {
     notice('Temporary movies cleared.');
   }));
 });
+
+let queueTimer;
+async function loadTranscodes() {
+  const data = await api('transcodes');
+  $('#transcode-status').textContent = data.enabled ? 'Transcoding enabled. Choose a movie, select its original version, then Prepare tablet copy.' : 'Transcoding is disabled on this server. Enable compose.transcode.yaml (and compose.nvidia.yaml for your GPU); see docs/transcoding.md.';
+  if (document.activeElement !== $('#transcode-encoder')) $('#transcode-encoder').value = data.encoder;
+  if (document.activeElement !== $('#transcode-budget')) $('#transcode-budget').value = data.cacheGB;
+  $('#transcode-jobs').replaceChildren(...data.jobs.slice().reverse().map(job => element('div', { class: 'list-row' }, [element('div', { class: 'row-text' }, [element('h3', { text: `${job.title} · ${job.preset}` }), element('p', { text: `${job.status} · ${job.progress || 0}%${job.size ? ' · ' + bytes(job.size) : ''}` }), job.error ? element('p', { text: job.error }) : null]),
+    job.status === 'ready' ? button('Choose tablet copy', async () => { model.library = await api('library'); const movie = model.library.movies.find(m => m.id === job.movieId); if (!movie) throw new Error('Refresh the library first.'); $('#settings').close(); showDetails(movie); $('#version').value = `tc:${job.id}`; }) : null,
+    ['queued', 'running', 'cancelling'].includes(job.status) ? button('Cancel conversion', async () => { await api('transcodes/cancel', { id: job.id }); await loadTranscodes(); }) : button('Remove cached copy / job', async () => { if (!await confirmAction('Remove cached tablet copy?', 'This removes the server copy and job. Originals and USB copies stay intact. Trip selections using this version will become unavailable.')) return; await api('transcodes/remove', { id: job.id }); await loadTranscodes(); await initialize(); })])));
+  if (!data.jobs.length) $('#transcode-jobs').append(element('p', { text: 'No conversions yet. Open a movie to prepare a tablet copy.' }));
+  clearTimeout(queueTimer);
+  if ($('#settings').open && data.jobs.some(j => ['queued', 'running', 'cancelling'].includes(j.status))) queueTimer = setTimeout(() => { if ($('#settings').open) void guarded(loadTranscodes); }, 3000);
+}
 
 const $ = selector => document.querySelector(selector);
 const bytes = n => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${n.toLocaleString()} bytes`;
@@ -41,7 +62,7 @@ function element(tag, attrs = {}, children = []) {
   return node;
 }
 const button = (text, action, className = 'secondary') => element('button', { text, class: className, onclick: () => void guarded(action) });
-function notice(message, error = false) { $('#notice').textContent = message; $('#notice').className = `notice${error ? ' error' : ''}`; $('#notice').hidden = !message; }
+function notice(message, error = false) { $('#notice').textContent = message; $('#notice').className = `notice${error ? ' error' : ''}`; $('#notice').hidden = !message; if ($('#settings').open) { $('#settings-notice').textContent = message; $('#settings-notice').className = `notice${error ? ' error' : ''}`; $('#settings-notice').hidden = !message; } }
 async function guarded(action) { try { return await action(); } catch (e) { notice(e.message || 'Something went wrong. Please try again.', true); } }
 async function api(route, data) {
   const response = await fetch(`/api/${route}`, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -182,6 +203,14 @@ function showDetails(movie) {
   const add = button('Add this version to the trip +', async () => { await addPick(movie, select.value); $('#details').close(); }, 'primary'); add.disabled = !movie.available;
   $('#details-body').replaceChildren(element('div', { class: 'detail-layout' }, [poster(movie), element('div', {}, [element('p', { class: 'eyebrow', text: `${movie.year || ''} · ${movie.rating || 'Not rated'} · ${movie.duration || '?'} MIN` }), element('h2', { text: movie.title }), element('p', { text: movie.summary || 'No description available from Plex.' }), element('p', { class: 'muted', text: movie.genres.join(' · ') }), element('label', { for: 'version', text: 'Version to copy' }), select, add]) ]));
   $('#details').showModal();
+  const quality = element('select', { 'aria-label': 'Tablet copy quality' }, [element('option', { value: '720p', text: '720p · about 1.9 GB / 2 hours' }), element('option', { value: '1080p', text: '1080p · about 3.7 GB / 2 hours' })]);
+  const audio = element('select', { 'aria-label': 'Audio language' }, [element('option', { value: 'default', text: 'Default audio track' })]);
+  const audioNote = element('p', { class: 'hint', text: 'Load audio choices to select a language.' });
+  select.addEventListener('change', () => { audio.replaceChildren(element('option', { value: 'default', text: 'Default audio track' })); });
+  $('#details-body').append(element('section', { class: 'settings-section' }, [element('h3', { text: 'Prepare a tablet copy' }), quality,
+    element('p', { class: 'hint', text: 'H.264 MP4 with stereo AAC. Original is kept. Subtitles are NOT included, including forced subtitles. Choose Original if you need them. Output sizes are estimates.' }), audio, audioNote,
+    button('Load audio languages', async () => { const selectedVersion = select.value, variant = movie.variants.find(v => v.id === selectedVersion); if (!variant || variant.parts.length !== 1 || selectedVersion.startsWith('tc:')) throw new Error('Choose a single-file original version.'); const tracks = await api('transcodes/inspect', { sourceId: variant.parts[0].id, version: variant.parts[0].version }); if (select.value !== selectedVersion) return; audio.replaceChildren(element('option', { value: 'default', text: 'Default audio track' }), ...tracks.audio.map(t => element('option', { value: t.id, text: `${t.language} · ${t.title || 'Audio'} · ${t.channels || '?'} channels${t.default ? ' · default' : ''}` }))); audioNote.textContent = tracks.subtitles ? 'This source has subtitles. They will not be included in the tablet copy.' : 'Audio choices loaded.'; }),
+    button('Prepare tablet copy', async () => { await api('transcodes', { movieId: movie.id, variantId: select.value, preset: quality.value, audio: audio.value.trim() || 'default' }); $('#details').close(); $('#open-settings').click(); })]));
 }
 function confirmAction(title, text, label = 'Remove') {
   $('#confirm-title').textContent = title; $('#confirm-body').textContent = text; $('#confirm-yes').textContent = label;

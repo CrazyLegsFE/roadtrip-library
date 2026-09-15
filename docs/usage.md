@@ -4,7 +4,9 @@
 
 ## Optional SSD staging
 
-In the movie library, expand **Copy settings**, choose **Use SSD staging**, and select a dedicated empty folder on your computer's SSD (not on the USB). Set a temporary-space budget in GB; 16 GB is a useful starting point. The budget accounts for about twice a movie's size plus existing staging files and metadata because browsers may create working copies. It does not reserve disk space or measure free space. Check available SSD space in your file manager. Re-select the same staging folder after reloading to resume a staged download.
+Open **Settings**, turn on **Use SSD staging**, and select a dedicated empty folder on your computer's SSD (not on the USB). Staging is off by default; your choice and budget are remembered in this browser. Set a temporary-space budget in GB; 16 GB is a useful starting point. The budget accounts for about twice a movie's size plus existing staging files and metadata because browsers may create working copies. It does not reserve disk space or measure free space. Check available SSD space in your file manager. Re-select the same staging folder after reloading to resume a staged download. Choosing a folder does not automatically turn staging on.
+
+For smaller movie files, see [tablet copies and transcoding](transcoding.md).
 
 Movies are downloaded and verified on SSD one at a time, then copied to USB in a single write transaction and verified there. Only after USB verification succeeds is that staged movie removed. If the budget is too small, increase it, clear old temporary files, or disable staging for direct copying. Unrelated files are never removed by **Clear temporary files**.
 

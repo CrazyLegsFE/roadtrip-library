@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promises as fs } from 'node:fs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createTranscoder } from './transcode.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MiB = 1024 * 1024;
@@ -184,8 +185,18 @@ export async function createApp(options = {}) {
       catalog.movies.push({ id, title, year: 2020 + i, summary: 'A fictional catalog entry for trying trip lists and USB transfers. The downloadable file is test data, not a playable movie.', duration: 90 + i * 7, rating: 'DEMO', genres: ['Sample'], thumb: '', library: 'Demo library', available: true, variants: [{ id: 'sample', label: 'Test file', size: stat.size, available: true, parts: [{ id, local, size: stat.size, version: sourceVersion(stat), filename: `${title} [demo].bin` }] }] });
     }
   }
-  const publicCatalog = () => ({ ...catalog, movies: catalog.movies.map(({ thumb, ...movie }) => ({ ...movie, poster: thumb ? `/api/art/${encodeURIComponent(movie.id)}` : null, variants: movie.variants.map(variant => ({ ...variant, parts: variant.parts.map(({ local, ...part }) => part) })) })) });
-  const locate = id => catalog.movies.flatMap(m => m.variants.flatMap(v => v.parts)).find(p => p.id === id);
+  const transcoder = await createTranscoder({ directory: path.join(config.dataDir, 'transcodes'), enabled: options.transcodeEnabled ?? process.env.TRANSCODE_ENABLED === 'true', versionOf: sourceVersion,
+    resolveSource: async (id, version) => {
+      const part = catalog.movies.flatMap(m => m.variants.flatMap(v => v.parts)).find(p => p.id === id);
+      if (!part || part.version !== version) throw fail(409, 'Source version changed. Refresh and queue again.');
+      const local = await safeMedia(part.local, config.mappings.map(m => m.local));
+      if (sourceVersion(await fs.stat(local)) !== version) throw fail(409, 'Source file changed. Refresh and queue again.');
+      return { ...part, local };
+    }
+  });
+  const movies = () => catalog.movies.map(m => { const variants = [...m.variants, ...transcoder.variants(m.id)]; return { ...m, variants, available: variants.some(v => v.available) }; });
+  const publicCatalog = () => ({ ...catalog, movies: movies().map(({ thumb, ...movie }) => ({ ...movie, poster: thumb ? `/api/art/${encodeURIComponent(movie.id)}` : null, variants: movie.variants.map(variant => ({ ...variant, parts: variant.parts.map(({ local, ...part }) => part) })) })) });
+  const locate = id => movies().flatMap(m => m.variants.flatMap(v => v.parts)).find(p => p.id === id);
   const cookie = value => `roadtrip=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${value ? 604800 : 0}${origin.startsWith('https:') ? '; Secure' : ''}`;
   async function body(req) {
     let size = 0, chunks = [];
@@ -229,9 +240,21 @@ export async function createApp(options = {}) {
       if (req.method === 'GET' && url.pathname === '/api/library') return json(res, 200, { ...publicCatalog(), configured: !!config.plexUrl && !!config.plexToken && !!config.mappings.length, refreshing: refreshBusy, demo: config.demo, chunkSize: CHUNK_SIZE });
       if (req.method === 'POST' && url.pathname === '/api/refresh') { await refresh(); return json(res, 200, publicCatalog()); }
       if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, state);
+      if (req.method === 'GET' && url.pathname === '/api/transcodes') return json(res, 200, transcoder.publicState());
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/settings') return json(res, 200, await transcoder.settings(await body(req)));
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/inspect') { const input = await body(req); return json(res, 200, await transcoder.inspect(input.sourceId, input.version)); }
+      if (req.method === 'POST' && url.pathname === '/api/transcodes') {
+        const input = await body(req), movie = catalog.movies.find(m => m.id === input.movieId);
+        const variant = movie?.variants.find(v => v.id === input.variantId);
+        if (!variant?.available || variant.parts.length !== 1) throw fail(400, 'Choose an available single-file original version for conversion.');
+        const part = variant.parts[0];
+        return json(res, 200, await transcoder.enqueue({ movieId: movie.id, sourceId: part.id, sourceVersion: part.version, preset: input.preset, audio: input.audio, title: movie.title, filename: part.filename }));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/cancel') return json(res, 200, await transcoder.cancel((await body(req)).id));
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/remove') return json(res, 200, await transcoder.remove((await body(req)).id));
       if (req.method === 'POST' && url.pathname === '/api/picks') {
         const input = await body(req), who = cleanText(input.who, 40) || 'Family';
-        const movie = catalog.movies.find(m => m.id === input.movieId);
+        const movie = movies().find(m => m.id === input.movieId);
         if (!movie) throw fail(404, 'Movie is no longer in the library.');
         const variant = movie.variants.find(v => v.id === input.variantId);
         if (!variant?.available) throw fail(400, 'Choose an available version.');
@@ -284,7 +307,7 @@ export async function createApp(options = {}) {
         const id = decodeURIComponent(url.pathname.slice(11));
         const part = locate(id);
         if (!part) throw fail(404, 'File is no longer in the library. Refresh and try again.');
-        const real = await safeMedia(part.local, config.mappings.map(m => m.local));
+        const real = await safeMedia(part.local, part.id.startsWith('tc:') ? [transcoder.directory] : config.mappings.map(m => m.local));
         const file = await fs.open(real, 'r');
         try {
           const stat = await file.stat(), version = sourceVersion(stat);
@@ -319,7 +342,8 @@ export async function createApp(options = {}) {
   });
   server.requestTimeout = 120000;
   server.headersTimeout = 15000;
-  return { server, refresh, config };
+  server.on('close', () => { void transcoder.stop(); });
+  return { server, refresh, config, transcoder };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const app = await createApp();

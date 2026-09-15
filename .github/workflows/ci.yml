@@ -40,8 +40,13 @@ jobs:
         run: |
           docker compose --env-file .env.example --profile tls config --quiet
           docker compose -f compose.demo.yaml config --quiet
+          docker compose --env-file .env.example -f compose.yaml -f compose.transcode.yaml -f compose.nvidia.yaml config --quiet
       - name: Build application image
         run: docker build --tag roadtrip:test .
+      - name: Build transcoding image and exercise real FFmpeg
+        run: |
+          docker build -f Dockerfile.transcode --tag roadtrip:transcode-test .
+          docker run --rm --volume "$PWD/scripts:/app/scripts:ro" roadtrip:transcode-test node scripts/smoke-transcode.mjs
       - name: Start demo container
         run: docker run --detach --name roadtrip-smoke --publish 127.0.0.1:8878:8787 --env DEMO_MODE=true --env HOST=0.0.0.0 --env APP_ORIGIN=http://localhost:8878 roadtrip:test
       - name: Exercise container HTTP endpoints

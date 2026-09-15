@@ -38,6 +38,18 @@ test('path mapping uses longest boundary-aware prefix and rejects traversal', ()
   assert.throws(() => mapPlexPath('/plex/movies/../../escape.mkv', mappings), /escapes/);
   assert.throws(() => mapPlexPath('/plex2/Film.mkv', mappings), /No media path/);
 });
+
+test('transcoding settings require authentication and validate input', async t => {
+  const f = await fixture(t);
+  assert.equal((await fetch(f.base + '/api/transcodes')).status, 401);
+  assert.equal((await f.request('/api/transcodes')).status, 200);
+  assert.equal((await f.request('/api/transcodes/settings', { encoder: 'shell', cacheGB: 10 })).status, 400);
+  assert.equal((await f.request('/api/transcodes/settings', { encoder: 'nvidia', cacheGB: 20 })).status, 200);
+  const settings = await (await f.request('/api/transcodes')).json();
+  assert.equal(settings.encoder, 'nvidia'); assert.equal(settings.cacheGB, 20); assert.equal(settings.enabled, false);
+  await f.request('/api/refresh', {});
+  assert.equal((await f.request('/api/transcodes', { movieId: '42', variantId: '1', preset: '720p' })).status, 400);
+});
 test('range boundaries reject oversized, suffix, multiple and invalid ranges', () => {
   assert.deepEqual(parseRange('bytes=0-9', 10), { start: 0, end: 9 });
   for (const range of ['bytes=-9', 'bytes=0-', 'bytes=8-7', 'bytes=0-1,3-4', 'bytes=9007199254740992-9007199254740993', `bytes=0-${CHUNK_SIZE}`]) assert.throws(() => parseRange(range, CHUNK_SIZE + 5), { status: 416 });

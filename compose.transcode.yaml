@@ -1,0 +1,7 @@
+services:
+  roadtrip:
+    build:
+      context: .
+      dockerfile: Dockerfile.transcode
+    environment:
+      TRANSCODE_ENABLED: "true"
