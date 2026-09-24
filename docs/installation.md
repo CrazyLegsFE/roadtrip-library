@@ -4,7 +4,9 @@
 
 You need Docker Engine with the Compose plugin on Ubuntu, existing media folders on local storage or mounted network shares (NFS or SMB/CIFS), the Plex URL and token, and an HTTPS address trusted by the client computers.
 
-The app copies original movie files. It does not transcode, remove DRM, or copy separate subtitles/extras. Multi-part Plex media is copied as separate numbered parts. Check that your tablet/VLC can play the chosen version. A filesystem with a 4 GB per-file limit cannot hold larger movies; use an appropriate filesystem supported by your tablet, commonly exFAT.
+No GPU is required for the base app or original-file copying. Optional CPU transcoding works on Intel and AMD CPUs using the FFmpeg-equipped image. NVIDIA hardware encoding additionally needs a compatible NVENC GPU, host driver, and NVIDIA Container Toolkit configured for Docker. Intel/AMD GPU acceleration is not implemented; those users can select CPU encoding. See [dependencies and hardware support](transcoding.md#dependencies-and-hardware-support) for the correct Compose files and setup links.
+
+The app copies original movie files and can optionally prepare smaller tablet copies. It does not remove DRM or copy separate subtitles/extras; converted copies do not include subtitles. Multi-part Plex media is copied as separate numbered originals. Check that your tablet/VLC can play the chosen version. A filesystem with a 4 GB per-file limit cannot hold larger movies; use an appropriate filesystem supported by your tablet, commonly exFAT.
 
 ### 1. Configure your folders and Plex
 

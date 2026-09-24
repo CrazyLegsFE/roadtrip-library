@@ -4,11 +4,31 @@
 
 Transcoding is optional. Originals remain read-only. The standard image works without FFmpeg; the transcoding image adds FFmpeg and a persistent, single-job conversion queue inside the Roadtrip service. Jobs keep running when the browser closes. Interrupted jobs restart from the beginning after server restart. Completed versions appear in the movie's version selector and use the existing verified USB transfer and optional SSD staging.
 
+## Dependencies and hardware support
+
+The standard app works without FFmpeg, GPU drivers, or a GPU. Library browsing, trip lists, wishlist, copying originals, verification, and SSD staging remain available. Transcoding is an optional server feature; it does not use the USB computer's GPU or Plex's transcoder.
+
+- **CPU encoding:** supported on Intel and AMD CPUs. Add `compose.transcode.yaml`; its image installs FFmpeg inside the container. No host FFmpeg installation or GPU device passthrough is needed. Allow writable server storage for generated copies (50 GB cache budget by default, configurable).
+- **NVIDIA encoding:** add both transcoding and NVIDIA overrides. The server needs an H.264 NVENC-capable GPU, a compatible NVIDIA driver, and the [NVIDIA Container Toolkit installed and configured for Docker](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). A successful `nvidia-smi` confirms device visibility, but an actual NVENC encode is needed to confirm encoding works with the container's FFmpeg.
+- **Intel and AMD GPUs:** hardware acceleration is not implemented in Roadtrip yet. There are no QSV/Quick Sync, VA-API, or AMD hardware encoder settings. Use **CPU** or copy original files. Installing GPU drivers or passing `/dev/dri` alone does not enable these encoders in the app.
+
+Do not include `compose.nvidia.yaml` on a server without configured NVIDIA hardware: Docker may reject the GPU reservation before the app starts. Selecting NVENC does not silently fall back to CPU on an encoding failure. Select CPU and prepare again to retry without GPU encoding; newly queued jobs use that choice. CPU remains a working option on a server that also has a GPU.
+
 ## Enable on your server
 
 Keep your existing `compose.yaml`, media mounts, `.env`, and HTTPS setup. Stop any USB transfer, update, then layer the supplied overrides onto your current file.
 
-For NVIDIA (including the tested Tesla P4 host):
+For CPU encoding (Intel or AMD; no GPU required):
+
+```sh
+git pull --ff-only &&
+docker compose -f compose.yaml -f compose.transcode.yaml config --quiet &&
+docker compose -f compose.yaml -f compose.transcode.yaml up -d --build
+```
+
+Leave **Settings → Video encoder** set to **CPU** and save if changing from NVIDIA.
+
+For NVIDIA (including the Tesla P4 host where a basic NVENC encode was tested):
 
 ```sh
 git pull --ff-only &&

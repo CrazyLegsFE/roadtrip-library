@@ -22,6 +22,19 @@ Your movie server can stay in the rack. Use VLC or another offline player on the
 
 No companion application, paid metadata API, JavaScript dependency installation, or USB connection to the server is required.
 
+## Dependencies and optional GPU support
+
+The base app needs Docker Engine with the Compose plugin, access to your Plex server and media folders, and trusted HTTPS for desktop Chrome/Edge USB transfers. **A GPU is not required.** Browsing, trip lists, wishlist, original-file copying, verification, and optional SSD staging work without transcoding dependencies.
+
+| Mode | Additional requirements | Compose files |
+|---|---|---|
+| Copy originals | None; no FFmpeg or GPU needed | `compose.yaml` |
+| CPU transcoding (including Intel and AMD CPUs) | Optional transcoding image, which includes FFmpeg; writable server cache space | `compose.yaml` + `compose.transcode.yaml` |
+| NVIDIA GPU transcoding | Transcoding image, an H.264 NVENC-capable GPU, compatible host driver, and NVIDIA Container Toolkit configured for Docker | Above files + `compose.nvidia.yaml` |
+| Intel or AMD GPU acceleration | Not implemented in Roadtrip yet; use CPU transcoding or copy originals | Do not add the NVIDIA override |
+
+CPU encoding is the default. Intel Quick Sync/QSV and Intel/AMD VA-API are not currently selectable encoders. The GPU, when used, belongs to the server; the computer holding the USB stick does not need one. NVIDIA setup and separate CPU/GPU commands are in [the transcoding guide](docs/transcoding.md#dependencies-and-hardware-support).
+
 ## How it works
 
 ```mermaid
@@ -62,14 +75,14 @@ The [configuration guide](docs/configuration.md) explains the three paths: what 
 
 1. Each person enters their name and adds movies to **Our trip list**.
 2. On the laptop with the stick, click **Connect USB folder** and choose its Movies folder.
-3. Review space requirements and click **Sync trip to USB**.
+3. For optional tablet copies, click **Prepare trip**; the server can work while the page is closed. When ready, review space requirements and click **Transfer prepared trip**.
 4. Leave the tab and laptop lid open. Wait for **All packed**, then safely eject the stick.
 
 After an interruption, reconnect the same folder and click Sync. Roadtrip checks saved data before continuing. [Usage and recovery](docs/usage.md) explains what is preserved.
 
 ## Limits to know
 
-- Copies original movie files; no transcoding, subtitle sidecars, extras, or automatic wishlist acquisition.
+- Copies originals or optionally prepares 720p/1080p tablet copies using CPU or NVIDIA encoding. Converted copies omit subtitles; subtitle sidecars, extras, and automatic wishlist acquisition are not supported.
 - A wake lock cannot override closing the lid, shutting down, battery policies, or forced sleep.
 - Browser checkpoints may temporarily duplicate existing bytes. Allow extra working space and expect lower throughput on some flash drives.
 - The browser cannot report actual USB free space; check your file manager.
