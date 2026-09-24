@@ -18,10 +18,12 @@ Pausing or cancelling preserves staged downloads. An interrupted final USB write
 4. Add unavailable titles to **Wishlist**.
 5. Plug the USB stick into a laptop or desktop. Open the app there in Chrome or Edge.
 6. Click **Connect USB folder**, choose a dedicated Movies folder on the stick, and grant write access. Browsers may reject selecting the root of a drive, so use a folder.
-7. Open **Our trip list** and click **Sync trip to USB**. Optionally enter free space from your file manager; the browser cannot measure the stick's actual free space.
+7. Open **Our trip list** and click **Transfer prepared trip**. For tablet selections, first click **Prepare trip** and wait for the server to finish. You can close the page during preparation and return later. Original versions need no conversion. Optionally enter free space from your file manager; the browser cannot measure the stick's actual free space.
 8. Keep the tab and laptop lid open. Wait for **All packed**, then eject the stick through your operating system.
 
 You can use any browser to browse and choose movies. Desktop Chrome/Edge with trusted HTTPS is the supported direct-sync target; mobile devices and other browsers are not promised to support folder writing.
+
+Prepared travel copies default to seven days of server retention, shortened to 24 hours after a verified USB transfer. Settings lets you change those periods or extend an existing copy. Expiration removes only the generated server copy; your original, USB copy, and trip selection are kept. Prepare the trip again if a copy has expired. See [transcoding and cache management](transcoding.md).
 
 ## Transfer integrity and recovery
 

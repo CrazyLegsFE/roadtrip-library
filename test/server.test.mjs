@@ -4,12 +4,13 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { createApp, mapPlexPath, safeMedia, parseRange, sourceVersion, filenameFor, CHUNK_SIZE } from '../server.mjs';
 
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)));
 const stop = server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
-async function fixture(t, { demo = false, thumb = '' } = {}) {
+async function fixture(t, { demo = false, thumb = '', ...extraConfig } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'roadtrip-test-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const media = path.join(directory, 'media'); await fs.mkdir(media);
@@ -26,6 +27,7 @@ async function fixture(t, { demo = false, thumb = '' } = {}) {
   });
   const plexUrl = await listen(plex); t.after(() => stop(plex));
   const config = { dataDir: path.join(directory, 'data'), password: 'test-family-password', origin: 'http://localhost:8787', plexUrl, plexToken: 'test-token', mappings: [{ plex: '/plex/movies', local: media, sentinel: '.mounted' }], demo };
+  Object.assign(config, extraConfig);
   const app = await createApp(config), base = await listen(app.server); t.after(() => stop(app.server));
   const response = await fetch(base + '/api/login', { method: 'POST', headers: { Origin: config.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: config.password }) });
   const cookie = response.headers.get('set-cookie').split(';')[0];
@@ -49,6 +51,35 @@ test('transcoding settings require authentication and validate input', async t =
   assert.equal(settings.encoder, 'nvidia'); assert.equal(settings.cacheGB, 20); assert.equal(settings.enabled, false);
   await f.request('/api/refresh', {});
   assert.equal((await f.request('/api/transcodes', { movieId: '42', variantId: '1', preset: '720p' })).status, 400);
+});
+
+test('trip preparation survives cache expiration and receipt requires a verified-version lease', async t => {
+  let time = Date.now();
+  const transcodeSpawn = (command, args) => {
+    const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => child.emit('close', 1);
+    setTimeout(async () => {
+      if (command === 'ffprobe') child.stdout.emit('data', JSON.stringify({ format: { duration: '1' }, streams: [{ index: 0, codec_type: 'video', codec_name: 'h264' }] }));
+      else await fs.writeFile(args.at(-1), 'travel-version');
+      child.emit('close', 0);
+    }, 1); return child;
+  };
+  const f = await fixture(t, { transcodeEnabled: true, transcodeSpawn, clock: () => time });
+  await f.request('/api/refresh', {});
+  await f.request('/api/picks', { movieId: '42', variantId: '1', quality: '720p', who: 'Family' });
+  let trip = await (await f.request('/api/state')).json(); assert.equal(trip.picks[0].preparation, 'needs preparation');
+  await f.request('/api/trip/prepare', {});
+  const ready = async () => { for (let i = 0; i < 100; i++) { const trip = await (await f.request('/api/state')).json(); if (trip.picks[0].preparation === 'ready') return trip; await new Promise(r => setTimeout(r, 10)); } throw new Error('Preparation did not complete'); };
+  trip = await ready(); assert.match(trip.picks[0].variantId, /^tc:/);
+  const library = await (await f.request('/api/library')).json(); const part = library.movies[0].variants.find(v => v.id === trip.picks[0].variantId).parts[0];
+  const lease = await (await f.request('/api/transcodes/lease', { parts: [{ id: part.id, version: part.version }] })).json();
+  assert.equal((await f.request('/api/transcodes/transferred', { token: lease.token, id: part.id, version: 'wrong' })).status, 400);
+  assert.equal((await f.request('/api/transcodes/transferred', { token: lease.token, id: part.id, version: part.version })).status, 200);
+  assert.equal((await (await f.request('/api/state')).json()).picks[0].expiresAt, time + 86400000);
+  await f.request('/api/transcodes/lease', { token: lease.token, release: true });
+  time += 86400001; await f.app.transcoder.cleanup();
+  trip = await (await f.request('/api/state')).json(); assert.equal(trip.picks.length, 1); assert.equal(trip.picks[0].preparation, 'needs preparation');
+  assert.equal(await fs.readFile(f.file, 'utf8'), 'This is test movie data.');
+  await f.request('/api/trip/prepare', {}); await ready();
 });
 test('range boundaries reject oversized, suffix, multiple and invalid ranges', () => {
   assert.deepEqual(parseRange('bytes=0-9', 10), { start: 0, end: 9 });
@@ -77,7 +108,7 @@ test('authentication, origin protection and persistent shared state', async t =>
   const state = await (await f.request('/api/state')).json();
   assert.equal(state.wishes.length, 12); assert.deepEqual(state.picks[0].people, ['A', 'B']);
   const saved = JSON.parse(await fs.readFile(path.join(f.config.dataDir, 'state.json')));
-  assert.deepEqual(saved, state);
+  assert.deepEqual(saved, { ...state, picks: state.picks.map(({ preparation, progress, error, ...pick }) => pick) });
   const restarted = await createApp(f.config), base = await listen(restarted.server); t.after(() => stop(restarted.server));
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { Origin: f.config.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: f.config.password }) });
   const restored = await (await fetch(base + '/api/state', { headers: { Cookie: login.headers.get('set-cookie').split(';')[0] } })).json();

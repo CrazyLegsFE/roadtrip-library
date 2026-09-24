@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export const PRESETS = { '720p': { height: 720, width: 1280, rate: 2000000 }, '1080p': { height: 1080, width: 1920, rate: 4000000 } };
 const error = message => Object.assign(new Error(message), { status: 400 });
@@ -26,21 +26,43 @@ export function encodeArgs(input, output, probe, preset, encoder, audioIndex) {
     ...(selected ? ['-c:a', 'aac', '-b:a', '128k', '-ac', '2'] : []), '-movflags', '+faststart', '-progress', 'pipe:1', '-f', 'mp4', output];
 }
 
-export async function createTranscoder({ directory, enabled = false, resolveSource, versionOf, spawnProcess = spawn }) {
+export async function createTranscoder({ directory, enabled = false, resolveSource, versionOf, spawnProcess = spawn, now = Date.now }) {
   await fs.mkdir(directory, { recursive: true });
+  if ((await fs.lstat(directory)).isSymbolicLink()) throw new Error('Conversion cache must not be a symbolic link.');
   const statePath = path.join(directory, 'queue.json');
   let state = { encoder: 'cpu', cacheGB: 50, jobs: [] };
   try { state = JSON.parse(await fs.readFile(statePath, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  state.retentionDays ??= 7; state.transferredHours ??= 24;
+  const leases = new Map(), readers = new Map();
+  const protectedJob = id => (readers.get(id) || 0) > 0 || [...leases.values()].some(l => l.expires > now() && l.ids.includes(id));
   let serial = Promise.resolve(), running = false, stopped = false, child = null, current = null;
   const save = () => { const snapshot = JSON.stringify(state); serial = serial.catch(() => {}).then(async () => { await fs.writeFile(statePath + '.tmp', snapshot); await fs.rename(statePath + '.tmp', statePath); }); return serial; };
   const outputPath = job => path.join(directory, `${job.id}.mp4`);
   for (const job of state.jobs) {
     if (!/^[a-f0-9]{32}$/.test(job.id)) throw new Error('Invalid transcode queue record.');
     if (['running', 'cancelling'].includes(job.status)) job.status = 'queued';
+    if (job.status === 'deleting') job.status = 'ready';
+    if (job.status === 'ready') job.expiresAt ??= now() + state.retentionDays * 86400000;
     if (job.status === 'ready') try { await fs.access(outputPath(job)); } catch { job.status = 'failed'; job.error = 'Cached movie is missing. Queue it again.'; }
     await fs.rm(outputPath(job) + '.partial', { force: true });
   }
-  const publicState = () => ({ enabled, presets: PRESETS, encoder: state.encoder, cacheGB: state.cacheGB, jobs: state.jobs.map(({ source, part, ...j }) => j) });
+  await save();
+  const startupGraceUntil = now() + 600000;
+  const publicState = () => ({ enabled, presets: PRESETS, encoder: state.encoder, cacheGB: state.cacheGB, retentionDays: state.retentionDays, transferredHours: state.transferredHours, jobs: state.jobs.map(({ source, part, ...j }) => j) });
+  let cleaning = false;
+  async function cleanup() {
+    if (cleaning) return; cleaning = true;
+    try {
+      for (const [token, lease] of leases) if (lease.expires <= now()) leases.delete(token);
+      for (const job of state.jobs) if (now() >= startupGraceUntil && job.status === 'ready' && job.expiresAt <= now() && !protectedJob(job.id)) {
+        // Only exact application-generated cache names are eligible. Never use a source/part path.
+        job.status = 'deleting';
+        try { await fs.rm(outputPath(job), { force: true }); job.status = 'expired'; delete job.part; job.size = 0; }
+        catch (e) { job.status = 'ready'; throw e; }
+        await save();
+      }
+    } finally { cleaning = false; }
+  }
   function run(command, args, signal, onText = () => {}) {
     return new Promise((resolve, reject) => {
       const process = spawnProcess(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false });
@@ -55,7 +77,7 @@ export async function createTranscoder({ directory, enabled = false, resolveSour
     });
   }
   const probe = async (filename, signal) => JSON.parse(await run('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', filename], signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)));
-  async function usage() { let size = 0; for (const entry of await fs.readdir(directory)) if (/^[a-f0-9]{32}\.mp4(?:\.partial)?$/.test(entry)) size += (await fs.stat(path.join(directory, entry))).size; return size; }
+  async function usage() { let size = 0; for (const entry of await fs.readdir(directory)) if (/^[a-f0-9]{32}\.mp4(?:\.partial)?$/.test(entry)) try { size += (await fs.stat(path.join(directory, entry))).size; } catch (e) { if (e.code !== 'ENOENT') throw e; } return size; }
   async function pump() {
     if (!enabled || running || stopped) return;
     running = true;
@@ -71,9 +93,10 @@ export async function createTranscoder({ directory, enabled = false, resolveSour
           if (!Number.isFinite(duration) || duration <= 0) throw error('Cannot determine movie duration.');
           // Reserve conservatively; enforce the budget during encoding as well.
           const reserve = Math.ceil(duration * (PRESETS[job.preset].rate * 1.5 + 128000) / 8 * 1.1);
-          if (await usage() + reserve > state.cacheGB * 1e9) throw error('Server conversion cache budget is too small. Remove cached copies or increase it in Settings.');
+          await cleanup();
+          if (await usage() + reserve > state.cacheGB * 1e9) throw Object.assign(error('Waiting for cache space. Remove expired copies or increase the budget in Settings.'), { waiting: true });
           const disk = await fs.statfs(directory);
-          if (disk.bavail * disk.bsize < reserve + 64 * 1024 * 1024) throw error('Not enough free space on the server for this conversion.');
+          if (disk.bavail * disk.bsize < reserve + 64 * 1024 * 1024) throw Object.assign(error('Waiting for free disk space on the server.'), { waiting: true });
           let buffer = '', quotaExceeded = false, monitoring = false;
           const monitor = setInterval(async () => {
             if (monitoring) return; monitoring = true;
@@ -94,15 +117,27 @@ export async function createTranscoder({ directory, enabled = false, resolveSour
           const stat = await fs.stat(outputPath(job));
           job.part = { id: `tc:${job.id}`, local: outputPath(job), filename: job.filename, originalName: job.filename, size: stat.size, version: versionOf(stat) };
           job.status = 'ready'; job.progress = 100; job.size = stat.size;
-        } catch (e) { job.status = stopped ? 'queued' : job.status === 'cancelling' ? 'cancelled' : 'failed'; job.error = e.code === 'ENOENT' ? 'FFmpeg is not installed. Enable the transcoding Docker image.' : String(e.message).slice(-1500); await fs.rm(partial, { force: true }); }
+          job.expiresAt = now() + state.retentionDays * 86400000; delete job.transferredAt;
+        } catch (e) { job.status = stopped ? 'queued' : job.status === 'cancelling' ? 'cancelled' : e.waiting ? 'waiting-space' : 'failed'; job.error = e.code === 'ENOENT' ? 'FFmpeg is not installed. Enable the transcoding Docker image.' : String(e.message).slice(-1500); await fs.rm(partial, { force: true }); }
         finally { current = null; await save(); }
       }
     } finally { running = false; }
   }
   const kick = () => { void pump().catch(e => console.error('Transcode queue:', e.message)); };
   const timer = setTimeout(kick, 100); timer.unref();
+  const maintenance = setInterval(() => { void cleanup().then(() => { for (const job of state.jobs) if (job.status === 'waiting-space') job.status = 'queued'; kick(); }).catch(e => console.error('Cache cleanup:', e.message)); }, 60000); maintenance.unref();
   return {
-    directory, publicState,
+    directory, publicState, cleanup,
+    beginRead(partId) { const id = partId.replace(/^tc:/, ''); const job = state.jobs.find(j => j.id === id); if (!job || job.status !== 'ready') throw error('Travel copy needs preparation.'); readers.set(id, (readers.get(id) || 0) + 1); return () => { readers.set(id, Math.max(0, (readers.get(id) || 1) - 1)); }; },
+    lease(input) {
+      if (input.token) { const lease = leases.get(input.token); if (!lease || lease.expires <= now()) throw error('Transfer protection expired. Reconnect and sync again.'); if (input.release) leases.delete(input.token); else lease.expires = now() + 600000; return { token: input.token }; }
+      if (!Array.isArray(input.parts) || input.parts.length > 1000) throw error('Invalid transfer selection.');
+      const ids = input.parts.map(p => { const job = state.jobs.find(j => `tc:${j.id}` === p.id); if (!job || job.status !== 'ready' || job.part?.version !== p.version) throw error('A travel copy changed or expired. Prepare the trip again.'); return job.id; });
+      if (leases.size >= 1000) throw error('Too many active transfers. Try later.');
+      const token = randomBytes(24).toString('hex'); leases.set(token, { ids, expires: now() + 600000 }); return { token };
+    },
+    async transferred({ token, id, version }) { const lease = leases.get(token); const job = state.jobs.find(j => `tc:${j.id}` === id); if (!lease || lease.expires <= now() || !job || !lease.ids.includes(job.id) || job.status !== 'ready' || job.part.version !== version) throw error('Transfer receipt does not match an active copy.'); job.transferredAt = now(); job.expiresAt = now() + state.transferredHours * 3600000; await save(); return { ok: true }; },
+    async extend(id) { const job = state.jobs.find(j => j.id === id); if (!job || job.status !== 'ready') throw error('Only ready travel copies can be extended.'); job.expiresAt = Math.max(job.expiresAt || 0, now() + state.retentionDays * 86400000); await save(); return publicState(); },
     async inspect(sourceId, version) {
       if (!enabled) throw error('Enable the transcoding Docker image first.');
       const source = await resolveSource(sourceId, version);
@@ -112,7 +147,9 @@ export async function createTranscoder({ directory, enabled = false, resolveSour
     variants(movieId) { return state.jobs.filter(j => j.movieId === movieId && j.status === 'ready' && j.part).map(j => ({ id: `tc:${j.id}`, label: `Tablet ${j.preset} · MP4`, available: true, size: j.size, parts: [j.part] })); },
     async settings(input) {
       if (!['cpu', 'nvidia'].includes(input.encoder) || !Number.isFinite(input.cacheGB) || input.cacheGB < 1 || input.cacheGB > 10000) throw error('Choose a valid encoder and cache budget (1–10000 GB).');
-      state.encoder = input.encoder; state.cacheGB = input.cacheGB; await save(); return publicState();
+      const days = input.retentionDays ?? state.retentionDays, hours = input.transferredHours ?? state.transferredHours;
+      if (!Number.isFinite(days) || days < 1 || days > 365 || !Number.isFinite(hours) || hours < 1 || hours > 8760) throw error('Retention must be 1–365 days and 1–8760 hours.');
+      state.encoder = input.encoder; state.cacheGB = input.cacheGB; state.retentionDays = days; state.transferredHours = hours; await save(); for (const job of state.jobs) if (job.status === 'waiting-space') job.status = 'queued'; kick(); return publicState();
     },
     async enqueue({ movieId, sourceId, sourceVersion, preset, audio = 'default', title, filename }) {
       if (!enabled) throw error('Enable the transcoding Docker image first. See the transcoding guide.');
@@ -120,14 +157,14 @@ export async function createTranscoder({ directory, enabled = false, resolveSour
       await resolveSource(sourceId, sourceVersion);
       const id = createHash('sha256').update(JSON.stringify([sourceId, sourceVersion, preset, String(audio), state.encoder])).digest('hex').slice(0, 32);
       let job = state.jobs.find(j => j.id === id);
-      if (job && ['queued', 'running', 'ready', 'cancelling'].includes(job.status)) return publicState();
-      if (state.jobs.length >= 500 && !job) throw error('Conversion queue is full. Remove old jobs first.');
+      if (job && ['queued', 'running', 'ready', 'cancelling', 'deleting'].includes(job.status)) return { ...publicState(), jobId: id };
+      if (state.jobs.filter(j => j.status !== 'expired').length >= 500 && !job) throw error('Conversion queue is full. Remove old jobs first.');
       if (!job) { job = { id }; state.jobs.push(job); }
       Object.assign(job, { movieId, sourceId, sourceVersion, preset, audio: String(audio), title, encoder: state.encoder, filename: filename.replace(/\.[^.]+$/, '') + ` - tablet-${preset}-${id.slice(0, 8)}.mp4`, status: 'queued', progress: 0, error: '', createdAt: new Date().toISOString() });
-      await save(); kick(); return publicState();
+      await save(); kick(); return { ...publicState(), jobId: id };
     },
-    async cancel(id) { const job = state.jobs.find(j => j.id === id); if (!job) throw error('Job not found.'); if (current?.job === job) { job.status = 'cancelling'; current.controller.abort(); } else if (job.status === 'queued') job.status = 'cancelled'; await save(); return publicState(); },
-    async remove(id) { const job = state.jobs.find(j => j.id === id); if (!job) throw error('Job not found.'); if (['running', 'queued', 'cancelling'].includes(job.status)) throw error('Cancel this conversion before removing it.'); await fs.rm(outputPath(job), { force: true }); state.jobs = state.jobs.filter(j => j.id !== id); await save(); return publicState(); },
-    async stop() { stopped = true; clearTimeout(timer); if (current) { current.job.status = 'queued'; current.controller.abort(); } await serial; }
+    async cancel(id) { const job = state.jobs.find(j => j.id === id); if (!job) throw error('Job not found.'); if (current?.job === job) { job.status = 'cancelling'; current.controller.abort(); } else if (['queued', 'waiting-space'].includes(job.status)) job.status = 'cancelled'; await save(); return publicState(); },
+    async remove(id) { const job = state.jobs.find(j => j.id === id); if (!job) throw error('Job not found.'); if (['running', 'queued', 'cancelling', 'deleting'].includes(job.status) || protectedJob(id)) throw error('This copy is preparing or transferring. Stop it before removal.'); job.status = 'deleting'; try { await fs.rm(outputPath(job), { force: true }); job.status = 'expired'; delete job.part; job.size = 0; } catch (e) { job.status = 'failed'; throw e; } await save(); return publicState(); },
+    async stop() { stopped = true; clearTimeout(timer); clearInterval(maintenance); if (current) { current.job.status = 'queued'; current.controller.abort(); } await serial; }
   };
 }

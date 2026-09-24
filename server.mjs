@@ -102,7 +102,7 @@ export async function createApp(options = {}) {
       fn(next);
       await atomicJson(stateFile, next);
       state = next;
-      return state;
+      return tripState();
     });
     commitQueue = operation.catch(() => {});
     return operation;
@@ -185,7 +185,14 @@ export async function createApp(options = {}) {
       catalog.movies.push({ id, title, year: 2020 + i, summary: 'A fictional catalog entry for trying trip lists and USB transfers. The downloadable file is test data, not a playable movie.', duration: 90 + i * 7, rating: 'DEMO', genres: ['Sample'], thumb: '', library: 'Demo library', available: true, variants: [{ id: 'sample', label: 'Test file', size: stat.size, available: true, parts: [{ id, local, size: stat.size, version: sourceVersion(stat), filename: `${title} [demo].bin` }] }] });
     }
   }
-  const transcoder = await createTranscoder({ directory: path.join(config.dataDir, 'transcodes'), enabled: options.transcodeEnabled ?? process.env.TRANSCODE_ENABLED === 'true', versionOf: sourceVersion,
+  const cacheRoot = path.resolve(config.dataDir, 'transcodes');
+  for (const mapping of config.mappings) {
+    const mediaRoot = await fs.realpath(mapping.local).catch(() => path.resolve(mapping.local));
+    const cacheParent = await fs.realpath(config.dataDir);
+    const cacheReal = path.join(cacheParent, 'transcodes');
+    if (within(mediaRoot, cacheReal) || within(cacheReal, mediaRoot)) throw new Error('Conversion cache and original media folders must be separate and not nested.');
+  }
+  const transcoder = await createTranscoder({ directory: cacheRoot, enabled: options.transcodeEnabled ?? process.env.TRANSCODE_ENABLED === 'true', versionOf: sourceVersion, ...(options.transcodeSpawn ? { spawnProcess: options.transcodeSpawn } : {}), ...(options.clock ? { now: options.clock } : {}),
     resolveSource: async (id, version) => {
       const part = catalog.movies.flatMap(m => m.variants.flatMap(v => v.parts)).find(p => p.id === id);
       if (!part || part.version !== version) throw fail(409, 'Source version changed. Refresh and queue again.');
@@ -197,6 +204,30 @@ export async function createApp(options = {}) {
   const movies = () => catalog.movies.map(m => { const variants = [...m.variants, ...transcoder.variants(m.id)]; return { ...m, variants, available: variants.some(v => v.available) }; });
   const publicCatalog = () => ({ ...catalog, movies: movies().map(({ thumb, ...movie }) => ({ ...movie, poster: thumb ? `/api/art/${encodeURIComponent(movie.id)}` : null, variants: movie.variants.map(variant => ({ ...variant, parts: variant.parts.map(({ local, ...part }) => part) })) })) });
   const locate = id => movies().flatMap(m => m.variants.flatMap(v => v.parts)).find(p => p.id === id);
+  const tripState = () => ({ ...state, picks: state.picks.map(p => {
+    const job = transcoder.publicState().jobs.find(j => j.id === p.jobId || `tc:${j.id}` === p.variantId);
+    const variantId = p.quality && p.quality !== 'original' ? job?.status === 'ready' ? `tc:${job.id}` : `pending:${p.key}` : p.variantId;
+    const variant = movies().find(m => m.id === p.movieId)?.variants.find(v => v.id === variantId);
+    return { ...p, variantId, preparation: variant?.available ? 'ready' : job?.status === 'expired' ? 'needs preparation' : job?.status || 'needs preparation', progress: job?.progress || 0, expiresAt: job?.expiresAt, error: p.prepareError || job?.error || '' };
+  }) });
+  let preparingTrip = false;
+  async function prepareTrip() {
+    if (preparingTrip) throw fail(409, 'Trip preparation is already being queued.');
+    preparingTrip = true;
+    try { for (const pick of structuredClone(state.picks)) {
+      const oldJob = transcoder.publicState().jobs.find(j => `tc:${j.id}` === pick.variantId);
+      const quality = pick.quality && pick.quality !== 'original' ? pick.quality : oldJob?.preset || 'original';
+      if (quality === 'original') continue;
+      try {
+        const movie = catalog.movies.find(m => m.id === pick.movieId);
+        const variant = movie?.variants.find(v => v.id === (pick.sourceVariantId || pick.variantId) || oldJob && v.parts.some(p => p.id === oldJob.sourceId));
+        if (!variant?.available || variant.parts.length !== 1) throw fail(400, 'Original source unavailable or multi-part. Refresh the library and choose a single-file source.');
+        const part = variant.parts[0];
+        const queued = await transcoder.enqueue({ movieId: movie.id, sourceId: part.id, sourceVersion: part.version, preset: quality, audio: pick.audio || oldJob?.audio || 'default', title: movie.title, filename: part.filename });
+        await mutate(next => { const saved = next.picks.find(p => p.key === pick.key); if (saved) Object.assign(saved, { quality, sourceVariantId: variant.id, audio: pick.audio || oldJob?.audio || 'default', jobId: queued.jobId, prepareError: '' }); });
+      } catch (e) { await mutate(next => { const saved = next.picks.find(p => p.key === pick.key); if (saved) saved.prepareError = e.message; }); }
+    } return tripState(); } finally { preparingTrip = false; }
+  }
   const cookie = value => `roadtrip=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${value ? 604800 : 0}${origin.startsWith('https:') ? '; Secure' : ''}`;
   async function body(req) {
     let size = 0, chunks = [];
@@ -239,7 +270,11 @@ export async function createApp(options = {}) {
       if (req.method === 'POST' && url.pathname === '/api/logout') { res.setHeader('Set-Cookie', cookie('')); return json(res, 200, { ok: true }); }
       if (req.method === 'GET' && url.pathname === '/api/library') return json(res, 200, { ...publicCatalog(), configured: !!config.plexUrl && !!config.plexToken && !!config.mappings.length, refreshing: refreshBusy, demo: config.demo, chunkSize: CHUNK_SIZE });
       if (req.method === 'POST' && url.pathname === '/api/refresh') { await refresh(); return json(res, 200, publicCatalog()); }
-      if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, state);
+      if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, tripState());
+      if (req.method === 'POST' && url.pathname === '/api/trip/prepare') return json(res, 200, await prepareTrip());
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/lease') return json(res, 200, transcoder.lease(await body(req)));
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/transferred') return json(res, 200, await transcoder.transferred(await body(req)));
+      if (req.method === 'POST' && url.pathname === '/api/transcodes/extend') return json(res, 200, await transcoder.extend((await body(req)).id));
       if (req.method === 'GET' && url.pathname === '/api/transcodes') return json(res, 200, transcoder.publicState());
       if (req.method === 'POST' && url.pathname === '/api/transcodes/settings') return json(res, 200, await transcoder.settings(await body(req)));
       if (req.method === 'POST' && url.pathname === '/api/transcodes/inspect') { const input = await body(req); return json(res, 200, await transcoder.inspect(input.sourceId, input.version)); }
@@ -258,10 +293,13 @@ export async function createApp(options = {}) {
         if (!movie) throw fail(404, 'Movie is no longer in the library.');
         const variant = movie.variants.find(v => v.id === input.variantId);
         if (!variant?.available) throw fail(400, 'Choose an available version.');
+        const quality = input.quality || 'original', audio = input.audio || 'default';
+        if (!['original', '720p', '1080p'].includes(quality) || !/^(default|\d{1,4})$/.test(audio)) throw fail(400, 'Invalid quality or audio choice.');
+        if (quality !== 'original' && (variant.id.startsWith('tc:') || variant.parts.length !== 1)) throw fail(400, 'Choose a single-file original source for a tablet copy.');
         return json(res, 200, await mutate(next => {
-          const key = `${movie.id}:${variant.id}`;
+          const key = `${movie.id}:${variant.id}${quality === 'original' ? '' : `:${quality}:${audio}`}`;
           let pick = next.picks.find(p => p.key === key);
-          if (!pick) { if (next.picks.length >= 1000) throw fail(400, 'The trip list is full.'); pick = { key, movieId: movie.id, variantId: variant.id, people: [] }; next.picks.push(pick); }
+          if (!pick) { if (next.picks.length >= 1000) throw fail(400, 'The trip list is full.'); pick = { key, movieId: movie.id, variantId: variant.id, sourceVariantId: variant.id, quality, audio, people: [] }; next.picks.push(pick); }
           if (!pick.people.includes(who)) pick.people.push(who);
         }));
       }
@@ -307,6 +345,8 @@ export async function createApp(options = {}) {
         const id = decodeURIComponent(url.pathname.slice(11));
         const part = locate(id);
         if (!part) throw fail(404, 'File is no longer in the library. Refresh and try again.');
+        const releaseRead = part.id.startsWith('tc:') ? transcoder.beginRead(part.id) : () => {};
+        try {
         const real = await safeMedia(part.local, part.id.startsWith('tc:') ? [transcoder.directory] : config.mappings.map(m => m.local));
         const file = await fs.open(real, 'r');
         try {
@@ -325,6 +365,7 @@ export async function createApp(options = {}) {
             await new Promise(resolve => { res.once('finish', resolve); res.once('close', resolve); res.end(payload); });
           } finally { activeChunks--; }
         } finally { await file.close(); }
+        } finally { releaseRead(); }
         return;
       }
       const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/transfer.js': ['transfer.js', 'text/javascript'], '/staging.js': ['staging.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };

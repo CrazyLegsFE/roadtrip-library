@@ -10,7 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#open-settings').addEventListener('click', () => { $('#settings').showModal(); for (const id of ['stage-enabled', 'stage-budget', 'stage-folder', 'stage-clear']) $('#' + id).disabled = model.syncing; void guarded(loadTranscodes); });
   $('#close-settings').addEventListener('click', () => $('#settings').close());
   $('#reload-transcodes').addEventListener('click', () => void guarded(loadTranscodes));
-  $('#save-transcode-settings').addEventListener('click', () => void guarded(async () => { await api('transcodes/settings', { encoder: $('#transcode-encoder').value, cacheGB: Number($('#transcode-budget').value) }); await loadTranscodes(); }));
+  $('#save-transcode-settings').addEventListener('click', () => void guarded(async () => { await api('transcodes/settings', { encoder: $('#transcode-encoder').value, cacheGB: Number($('#transcode-budget').value), retentionDays: Number($('#retention-days').value), transferredHours: Number($('#transferred-hours').value) }); await loadTranscodes(); }));
+  $('#prepare-trip').addEventListener('click', () => void guarded(async () => { $('#prepare-trip').disabled = true; notice('Queuing your trip for preparation…'); try { model.state = await api('trip/prepare', {}); await initialize(); notice('Trip preparation queued. You can close this page and return later. Check each movie for errors.'); } finally { $('#prepare-trip').disabled = model.syncing; } }));
   $('#stage-folder').addEventListener('click', () => void guarded(async () => {
     if (model.syncing) throw new Error('Stop the transfer before changing staging folders.');
     const folder = await window.showDirectoryPicker({ id: 'roadtrip-staging', mode: 'readwrite' });
@@ -38,12 +39,15 @@ async function loadTranscodes() {
   $('#transcode-status').textContent = data.enabled ? 'Transcoding enabled. Choose a movie, select its original version, then Prepare tablet copy.' : 'Transcoding is disabled on this server. Enable compose.transcode.yaml (and compose.nvidia.yaml for your GPU); see docs/transcoding.md.';
   if (document.activeElement !== $('#transcode-encoder')) $('#transcode-encoder').value = data.encoder;
   if (document.activeElement !== $('#transcode-budget')) $('#transcode-budget').value = data.cacheGB;
+  if (document.activeElement !== $('#retention-days')) $('#retention-days').value = data.retentionDays;
+  if (document.activeElement !== $('#transferred-hours')) $('#transferred-hours').value = data.transferredHours;
   $('#transcode-jobs').replaceChildren(...data.jobs.slice().reverse().map(job => element('div', { class: 'list-row' }, [element('div', { class: 'row-text' }, [element('h3', { text: `${job.title} · ${job.preset}` }), element('p', { text: `${job.status} · ${job.progress || 0}%${job.size ? ' · ' + bytes(job.size) : ''}` }), job.error ? element('p', { text: job.error }) : null]),
     job.status === 'ready' ? button('Choose tablet copy', async () => { model.library = await api('library'); const movie = model.library.movies.find(m => m.id === job.movieId); if (!movie) throw new Error('Refresh the library first.'); $('#settings').close(); showDetails(movie); $('#version').value = `tc:${job.id}`; }) : null,
-    ['queued', 'running', 'cancelling'].includes(job.status) ? button('Cancel conversion', async () => { await api('transcodes/cancel', { id: job.id }); await loadTranscodes(); }) : button('Remove cached copy / job', async () => { if (!await confirmAction('Remove cached tablet copy?', 'This removes the server copy and job. Originals and USB copies stay intact. Trip selections using this version will become unavailable.')) return; await api('transcodes/remove', { id: job.id }); await loadTranscodes(); await initialize(); })])));
+    job.status === 'ready' ? button(`Extend retention${job.expiresAt ? ' · expires ' + date(job.expiresAt) : ''}`, async () => { await api('transcodes/extend', { id: job.id }); await loadTranscodes(); }) : null,
+    ['queued', 'running', 'cancelling', 'waiting-space'].includes(job.status) ? button('Cancel conversion', async () => { await api('transcodes/cancel', { id: job.id }); await loadTranscodes(); }) : job.status !== 'expired' ? button('Remove cached copy', async () => { if (!await confirmAction('Remove cached tablet copy?', 'This removes only the server travel copy. Originals, USB copies, and trip selections are kept.')) return; await api('transcodes/remove', { id: job.id }); await loadTranscodes(); await initialize(); }) : null])));
   if (!data.jobs.length) $('#transcode-jobs').append(element('p', { text: 'No conversions yet. Open a movie to prepare a tablet copy.' }));
   clearTimeout(queueTimer);
-  if ($('#settings').open && data.jobs.some(j => ['queued', 'running', 'cancelling'].includes(j.status))) queueTimer = setTimeout(() => { if ($('#settings').open) void guarded(loadTranscodes); }, 3000);
+  if ($('#settings').open && data.jobs.some(j => ['queued', 'running', 'cancelling', 'waiting-space'].includes(j.status))) queueTimer = setTimeout(() => { if ($('#settings').open) void guarded(loadTranscodes); }, 3000);
 }
 
 const $ = selector => document.querySelector(selector);
@@ -133,13 +137,16 @@ function renderTrip() {
     const r = model.manifest?.records[p.id];
     return sum + (r?.version === p.version ? p.size - r.chunks.reduce((n, c) => n + c.length, 0) : p.size);
   }, 0);
-  $('#trip-total').textContent = `${picks.length} selection${picks.length === 1 ? '' : 's'} · ${bytes(total)}`;
+  $('#trip-total').textContent = `${picks.length} selection${picks.length === 1 ? '' : 's'} · ${picks.some(p => p.preparation !== 'ready') ? 'final size available after preparation' : bytes(total)}`;
   $('#trip-space').textContent = model.directory ? `${bytes(remaining)} left to copy, plus temporary working space.` : 'Connect your USB folder to check what’s already there.';
-  $('#sync').disabled = model.syncing || !picks.length;
+  const ready = picks.filter(p => p.preparation === 'ready').length;
+  $('#trip-ready').textContent = picks.length && ready === picks.length ? `Your trip is ready · ${ready} selections · ${bytes(total)}` : `${ready} of ${picks.length} selections ready. Prepare your trip, then return later to transfer.`;
+  $('#sync').disabled = model.syncing || !picks.length || ready !== picks.length;
+  $('#prepare-trip').disabled = model.syncing || !picks.length;
   $('#trip-list').replaceChildren(...picks.map(pick => {
     const movie = model.library.movies.find(m => m.id === pick.movieId), variant = movie?.variants.find(v => v.id === pick.variantId);
     const icon = movie?.poster ? element('img', { class: 'mini-poster', src: movie.poster, alt: '' }) : element('div', { class: 'mini-poster', text: '▸' });
-    return element('div', { class: 'list-row' }, [icon, element('div', { class: 'row-text' }, [element('h3', { text: movie?.title || 'Movie removed from library' }), element('p', { text: `${variant?.label || 'Version unavailable'}${variant ? ` · ${bytes(variant.size)}` : ''} · Picked by ${pick.people.join(', ')}` }), !variant?.available ? element('p', { text: 'This selection cannot be synced until its file is available.' }) : null]), button('Remove from trip', async () => { model.state = await api('picks/remove', { key: pick.key }); render(); }, 'text-button')]);
+    return element('div', { class: 'list-row' }, [icon, element('div', { class: 'row-text' }, [element('h3', { text: movie?.title || 'Movie removed from library' }), element('p', { text: `${pick.quality && pick.quality !== 'original' ? 'Tablet ' + pick.quality : variant?.label || 'Original'}${variant ? ` · ${bytes(variant.size)}` : ''} · Picked by ${pick.people.join(', ')}` }), element('p', { text: `${pick.preparation || 'needs preparation'}${pick.preparation === 'running' ? ' · ' + pick.progress + '%' : ''}${pick.expiresAt && pick.preparation === 'ready' ? ' · expires ' + date(pick.expiresAt) : ''}${pick.error ? ' · ' + pick.error : ''}` })]), button('Remove from trip', async () => { model.state = await api('picks/remove', { key: pick.key }); render(); }, 'text-button')]);
   }));
   if (!picks.length) $('#trip-list').append(empty('A trip worth watching', 'Add movies from the library. Everyone’s choices will appear here.'));
 }
@@ -210,7 +217,7 @@ function showDetails(movie) {
   $('#details-body').append(element('section', { class: 'settings-section' }, [element('h3', { text: 'Prepare a tablet copy' }), quality,
     element('p', { class: 'hint', text: 'H.264 MP4 with stereo AAC. Original is kept. Subtitles are NOT included, including forced subtitles. Choose Original if you need them. Output sizes are estimates.' }), audio, audioNote,
     button('Load audio languages', async () => { const selectedVersion = select.value, variant = movie.variants.find(v => v.id === selectedVersion); if (!variant || variant.parts.length !== 1 || selectedVersion.startsWith('tc:')) throw new Error('Choose a single-file original version.'); const tracks = await api('transcodes/inspect', { sourceId: variant.parts[0].id, version: variant.parts[0].version }); if (select.value !== selectedVersion) return; audio.replaceChildren(element('option', { value: 'default', text: 'Default audio track' }), ...tracks.audio.map(t => element('option', { value: t.id, text: `${t.language} · ${t.title || 'Audio'} · ${t.channels || '?'} channels${t.default ? ' · default' : ''}` }))); audioNote.textContent = tracks.subtitles ? 'This source has subtitles. They will not be included in the tablet copy.' : 'Audio choices loaded.'; }),
-    button('Prepare tablet copy', async () => { await api('transcodes', { movieId: movie.id, variantId: select.value, preset: quality.value, audio: audio.value.trim() || 'default' }); $('#details').close(); $('#open-settings').click(); })]));
+    button('Add tablet selection to trip', async () => { model.state = await api('picks', { movieId: movie.id, variantId: select.value, quality: quality.value, audio: audio.value || 'default', who: who() }); $('#details').close(); render(); changeView('trip'); notice('Tablet selection added. Click Prepare trip to queue conversions.'); })]));
 }
 function confirmAction(title, text, label = 'Remove') {
   $('#confirm-title').textContent = title; $('#confirm-body').textContent = text; $('#confirm-yes').textContent = label;
@@ -266,6 +273,7 @@ async function withDriveLock(action) {
 async function sync() {
   if (model.syncing) return;
   if (!model.directory) { await connect(); if (!model.directory) return; }
+  await initialize();
   const parts = selectedParts();
   if (!parts.length) throw new Error('There are no available files in the trip list.');
   const useStaging = $('#stage-enabled').checked;
@@ -284,7 +292,13 @@ async function sync() {
     const guard = new WakeGuard(text => { $('#wake-status').textContent = text; });
     const preventClose = e => { e.preventDefault(); e.returnValue = ''; };
     window.addEventListener('beforeunload', preventClose);
+    let protection = null, renewal = null, renewing = false, receiptFailed = false;
     try {
+      const cached = parts.filter(p => p.id.startsWith('tc:')).map(p => ({ id: p.id, version: p.version }));
+      if (cached.length) {
+        protection = await api('transcodes/lease', { parts: cached });
+        renewal = setInterval(async () => { if (renewing) return; renewing = true; try { await api('transcodes/lease', { token: protection.token }); } catch { model.controller.abort('protection-expired'); } finally { renewing = false; } }, 30000);
+      }
       render(); await guard.start();
       for (const [index, part] of parts.entries()) {
         const onProgress = progress => {
@@ -304,17 +318,22 @@ async function sync() {
             await stagedTransfer(stagingDirectory, model.directory, model.manifest, part, stageBudget, model.controller.signal, onProgress);
           });
         } else await transferPart(model.directory, model.manifest, part, model.controller.signal, onProgress);
+        if (part.id.startsWith('tc:') && model.manifest.records[part.id]?.status === 'ready' && !model.controller.signal.aborted) {
+          try { await api('transcodes/transferred', { token: protection.token, id: part.id, version: part.version }); } catch { receiptFailed = true; }
+        }
       }
       $('#sync-title').textContent = 'All packed. Enjoy the trip.';
       $('#sync-detail').textContent = `${parts.length} files checked and ready. Eject your USB stick using your computer’s file manager.`;
-      notice('Your trip list is on the drive. All copied data passed its checks.');
+      notice(receiptFailed ? 'USB copies passed verification. The server could not record every completion, so those cached copies keep their previous expiration.' : 'Your trip list is on the drive. All copied data passed its checks.');
     } catch (e) {
       const paused = model.controller.signal.aborted || e.name === 'AbortError';
       const cancelled = model.controller.signal.reason === 'cancel';
       $('#sync-title').textContent = cancelled ? 'Transfer cancelled.' : paused ? 'Paused. Your checkpoints are saved.' : 'Transfer stopped safely.';
-      $('#sync-detail').textContent = 'Click Sync trip to USB to check saved data and continue.';
+      $('#sync-detail').textContent = 'Click Transfer prepared trip to check saved data and continue.';
       notice(cancelled ? 'No more movies will be copied. Completed movies and verified partial copies are kept. Use On the drive to remove unwanted copies.' : paused ? 'Completed checkpoints are kept. The current unsaved checkpoint will be copied again.' : `${e.message} Completed movies and saved checkpoints are kept.`, !paused);
     } finally {
+      clearInterval(renewal);
+      if (protection) await api('transcodes/lease', { token: protection.token, release: true }).catch(() => {});
       window.removeEventListener('beforeunload', preventClose); await guard.stop();
       model.syncing = false; $('#pause').disabled = true; $('#cancel').disabled = true;
       try { model.manifest = await loadManifest(model.directory); await persistInventory(); } catch (e) { notice(`Transfer ended, but the drive catalog could not be updated: ${e.message}`, true); }
@@ -322,6 +341,7 @@ async function sync() {
     }
   });
 }
+setInterval(() => { if (model.syncing || $('#shell').hidden || model.view !== 'trip' || document.visibilityState !== 'visible') return; void initialize().catch(() => {}); }, 5000);
 async function initialize() {
   const session = await api('session');
   $('#login').hidden = session.authenticated; $('#shell').hidden = !session.authenticated;

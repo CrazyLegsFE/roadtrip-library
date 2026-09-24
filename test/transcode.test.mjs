@@ -19,7 +19,7 @@ test('encoder arguments use explicit streams and tone mapping without shell comm
   assert.throws(() => encodeArgs('in', 'out', hdr, '720p', 'cpu', 'default'), /Dolby Vision/);
 });
 
-async function fixture(t, { fail = false, slow = false, changed = false } = {}) {
+async function fixture(t, { fail = false, slow = false, changed = false, now = Date.now, duration = '10' } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'roadtrip-encode-'));
   let active = 0, maxActive = 0, encodes = 0, checks = 0;
   const spawnProcess = (command, args, options) => {
@@ -31,14 +31,14 @@ async function fixture(t, { fail = false, slow = false, changed = false } = {}) 
     if (command === 'ffmpeg') { active++; maxActive = Math.max(active, maxActive); encodes++; }
     setTimeout(async () => {
       if (closed) return;
-      if (command === 'ffprobe') process.stdout.emit('data', Buffer.from(JSON.stringify(metadata)));
+      if (command === 'ffprobe') process.stdout.emit('data', Buffer.from(JSON.stringify({ ...metadata, format: { duration } })));
       else if (fail) { process.stderr.emit('data', Buffer.from('Encoder failed')); close(1); return; }
       else { await fs.writeFile(args.at(-1), 'encoded test movie'); process.stdout.emit('data', Buffer.from('out_time_us=10000000\nprogress=end\n')); }
       close(0);
     }, slow && command === 'ffmpeg' ? 100 : 2);
     return process;
   };
-  const config = { directory, enabled: true, spawnProcess, versionOf: () => 'encoded-version', resolveSource: async () => { checks++; if (changed && checks >= 3) throw new Error('Source changed'); return { local: '/movie.mkv' }; } };
+  const config = { directory, enabled: true, spawnProcess, now, versionOf: () => 'encoded-version', resolveSource: async () => { checks++; if (changed && checks >= 3) throw new Error('Source changed'); return { local: '/movie.mkv' }; } };
   const queue = await createTranscoder(config);
   t.after(async () => { await queue.stop(); await new Promise(r => setTimeout(r, 120)); await fs.rm(directory, { recursive: true, force: true }); });
   const enqueue = (preset = '720p') => queue.enqueue({ movieId: 'movie', sourceId: 'part', sourceVersion: 'v1', preset, title: 'Test', filename: 'Test.mkv' });
@@ -84,4 +84,42 @@ test('restart recovers interrupted jobs and disabled mode rejects conversion', a
   assert.equal(disabled.publicState().jobs[0].status, 'queued');
   await assert.rejects(disabled.enqueue({}), /Enable/); await disabled.stop();
   const recovered = await createTranscoder(f.config); await settle(recovered); assert.equal(recovered.publicState().jobs[0].status, 'ready'); await recovered.stop();
+});
+
+test('expiration deletes only recorded cache output, preserves tombstone, and regenerates', async t => {
+  let clock = 1000000000; const f = await fixture(t, { now: () => clock }); await f.enqueue();
+  const [job] = await settle(f.queue);
+  const unrelated = path.join(f.directory, 'original.mkv'); await fs.writeFile(unrelated, 'original');
+  clock += 8 * 86400000; await f.queue.cleanup();
+  assert.equal(f.queue.publicState().jobs[0].status, 'expired');
+  await assert.rejects(fs.access(path.join(f.directory, job.id + '.mp4')), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(unrelated, 'utf8'), 'original');
+  await f.enqueue(); assert.equal((await settle(f.queue))[0].status, 'ready');
+});
+test('leases and open reads block cleanup; verified receipt shortens retention', async t => {
+  let clock = 1000000000; const f = await fixture(t, { now: () => clock }); await f.enqueue(); await settle(f.queue);
+  const part = f.queue.variants('movie')[0].parts[0]; clock += 8 * 86400000;
+  const lease = f.queue.lease({ parts: [{ id: part.id, version: part.version }] });
+  await f.queue.cleanup(); assert.equal(f.queue.variants('movie').length, 1);
+  await assert.rejects(f.queue.remove(part.id.slice(3)), /transferring/);
+  await assert.rejects(f.queue.transferred({ token: lease.token, id: part.id, version: 'wrong' }), /receipt/);
+  await f.queue.transferred({ token: lease.token, id: part.id, version: part.version });
+  assert.equal(f.queue.publicState().jobs[0].expiresAt, clock + 86400000);
+  f.queue.lease({ token: lease.token, release: true });
+  clock += 86400001;
+  const release = f.queue.beginRead(part.id); await f.queue.cleanup(); assert.equal(f.queue.variants('movie').length, 1);
+  release(); await f.queue.cleanup(); assert.equal(f.queue.variants('movie').length, 0);
+});
+test('abandoned lease expires and extension preserves an untransferred movie', async t => {
+  let clock = 1000000000; const f = await fixture(t, { now: () => clock }); await f.enqueue(); const [job] = await settle(f.queue);
+  clock += 6 * 86400000; await f.queue.extend(job.id); clock += 2 * 86400000; await f.queue.cleanup();
+  assert.equal(f.queue.variants('movie').length, 1);
+  const part = f.queue.variants('movie')[0].parts[0]; const lease = f.queue.lease({ parts: [{ id: part.id, version: part.version }] });
+  clock += 8 * 86400000; assert.throws(() => f.queue.lease({ token: lease.token }), /expired/);
+  await f.queue.cleanup(); assert.equal(f.queue.variants('movie').length, 0);
+});
+test('insufficient budget waits without encoding or deleting unexpired copies', async t => {
+  const f = await fixture(t, { duration: '10000' }); await f.queue.settings({ encoder: 'cpu', cacheGB: 1 }); await f.enqueue();
+  assert.equal((await settle(f.queue))[0].status, 'waiting-space'); assert.equal(f.counts().encodes, 0);
+  await f.queue.settings({ encoder: 'cpu', cacheGB: 50 }); assert.equal((await settle(f.queue))[0].status, 'ready');
 });

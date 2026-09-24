@@ -27,14 +27,20 @@ NVIDIA requires the host driver and NVIDIA Container Toolkit. The override expos
 1. Open a movie's details and choose a single-file original version.
 2. Choose 720p (~2 Mbps video) or 1080p (~4 Mbps video). Estimates are about 1.9 GB and 3.7 GB for two hours, respectively, including 128 kbps stereo AAC. Variable bitrate and container overhead mean actual size differs. Movies are not upscaled.
 3. Optionally load audio languages and select a track. Otherwise the default audio track, or first track if no default is set, is used.
-4. Click **Prepare tablet copy**. Settings shows queued/running/ready/failed status, progress and cancellation.
-5. When ready, click **Choose tablet copy**, add that version to the trip, and sync. Existing original-version picks are not silently replaced; remove them explicitly if you only want the smaller copy.
+4. Click **Add tablet selection to trip**. Repeat for other movies, then click **Prepare trip** in the trip list. Preparation runs on the server, so you can close the page. The trip list shows each selection's status; Settings also provides progress and cancellation.
+5. Return later, connect your USB folder, and click **Transfer prepared trip** once every selection is ready. Keep the browser open during USB copying. Existing original-version picks are not silently replaced; remove them explicitly if you only want the smaller copy.
 
 The output is H.264, 8-bit MP4 with stereo AAC. HDR10/HLG is tone-mapped to SDR using FFmpeg zscale and Hable tone mapping. **Subtitles, including forced subtitles, are not included.** Use the original for movies requiring subtitles. Dolby Vision sources and multi-part versions are rejected for conversion in this release; choose an SDR/HDR10 single-file version instead. Test picture, audio, seeking and any essential dialogue before travel.
 
 ## Server cache and recovery
 
-The server cache defaults to 50 GB under `/data/transcodes` in the existing application volume. Settings controls its budget independently of the client SSD budget. A conservative space estimate and actual server free-space check run before encoding; the running job checks the cache limit periodically (so a small transient overshoot is possible). If space is insufficient, a job fails with an explanation; cached movies are not automatically deleted. Cancel a queued/running job or remove a finished/failed job and its cached file in Settings. Removing a cached copy leaves originals and USB copies alone but invalidates any trip pick referencing it.
+The server cache defaults to 50 GB under `/data/transcodes` in the existing application volume. Settings controls its budget independently of the client SSD budget. A conservative space estimate and actual server free-space check run before encoding; the running job checks the cache limit periodically (so a small transient overshoot is possible). Jobs that cannot start due to insufficient space wait and retry periodically. Increase the budget or remove unused cached copies in Settings if needed.
+
+Generated copies expire after **7 days**, or **24 hours after the browser reports a verified USB transfer**. Both periods are configurable in Settings; changes apply to future completions, transfer receipts, and extensions. Use **Extend retention** to keep a ready copy longer. Closing the page during preparation does not stop the queue. Closing it during a USB transfer does not count as successful delivery.
+
+Cleanup runs approximately once a minute, with a ten-minute grace period after server startup. Active downloads and connected USB transfers protect their cached files; abandoned transfer protection expires after ten minutes without renewal. Cleanup and manual cache removal target only recorded, generated filenames in the dedicated conversion cache. Source media remains mounted read-only, and the server rejects a conversion cache overlapping configured media roots. USB copies are never removed by server cleanup.
+
+Expired or removed copies retain their trip selections and preparation choices. Click **Prepare trip** to regenerate them. Cancel queued/running jobs or remove inactive cached copies in Settings. Retention deadlines do not override active transfer protection. Interrupted conversions restart from the beginning when the server comes back.
 
 Completed outputs are checked for video codec and duration before becoming selectable. Download checksums protect the transferred bytes. A source fingerprint check rejects movies changed during conversion. This does not replace watching a sample for quality assessment.
 
